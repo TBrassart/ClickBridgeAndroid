@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tap_service_description">ClickBridge simule un toucher sur l\'écran quand tu appuies sur un bouton du Zwift Click. Il ne lit pas le contenu de l\'écran.</string>
+</resources>

@@ -1,37 +1,39 @@
-# ClickBridge pour Android — étape 1 : lecture du Zwift Click
+# ClickBridge pour Android — étape 2 : appuis tactiles sur MyWhoosh
 
-Mini-appli de test : elle se connecte au Zwift Click V1 en Bluetooth, fait l'échange de clés,
-déchiffre les trames et affiche les appuis sur **+** et **−** à l'écran, avec un journal.
-Elle n'envoie encore aucune touche à MyWhoosh (c'est l'étape 2).
+L'appli lit le Zwift Click V1 (Bluetooth, handshake chiffré) dans un service de premier plan,
+et transforme chaque appui sur **+** / **−** en toucher sur l'écran, à l'endroit des boutons de
+vitesse de MyWhoosh, grâce à un service d'accessibilité.
 
-## Obtenir l'APK avec GitHub Actions
+## Mettre à jour le dépôt GitHub
 
-1. Sur github.com, crée un dépôt **privé** (par exemple `clickbridge-android`).
-2. Envoie-y **tout le contenu** de ce dossier, y compris le dossier caché `.github`
-   (« Add file » > « Upload files », puis glisse les fichiers et dossiers).
-3. Onglet **Actions** du dépôt : le workflow « Construire l'APK » se lance tout seul
-   (sinon : clique dessus, puis « Run workflow »). Compte 3 à 6 minutes.
-4. Une fois le travail terminé (coche verte), ouvre-le et télécharge l'artefact **ClickBridge-apk**
-   (un .zip qui contient `app-debug.apk`).
-5. Sur le Pixel : copie l'APK, ouvre-le, autorise l'installation depuis cette source si Android le demande.
-   Si Play Protect affiche un avertissement, choisis « Installer quand même ».
+Remplace les fichiers du dépôt par ceux de ce dossier (tout, y compris `.github` et `app/src/main/res`),
+puis ouvre l'onglet **Actions** : le workflow construit l'APK. Télécharge l'artefact **ClickBridge-apk**
+et installe `app-debug.apk` par-dessus l'ancienne version.
 
-## Premier essai
+## Mise en route sur le téléphone / la tablette (à faire une fois)
 
-1. Ferme Zwift, Companion et toute appli qui tient le Click ; sur le PC, ferme ClickBridge.
-2. Lance l'appli et accepte la permission « Appareils à proximité ».
-3. Réveille le Click (appui sur un bouton, LED qui pulse en bleu).
-4. Statut attendu : « Connecté : prêt », puis les gros carrés + et − s'allument à chaque appui.
-5. Bouton « Copier le journal » : colle-le dans la conversation si quelque chose ne marche pas.
+1. Ouvre ClickBridge et appuie sur **Démarrer** (autorise « Appareils à proximité » et les notifications).
+2. **Active le service d'accessibilité** :
+   - appuie sur « Ouvrir les réglages d'accessibilité », puis « ClickBridge (appuis tactiles) » > activer ;
+   - si Android refuse (« paramètre restreint ») : bouton « Infos de l'appli », menu ⋮ en haut à droite,
+     « Autoriser les paramètres restreints », puis recommence.
+3. **Règle les points d'appui** : ouvre MyWhoosh sur l'écran de course, puis (depuis ClickBridge ou
+   depuis la notification « Régler les points ») fais apparaître les pastilles. Glisse **+** et **−**
+   sur les boutons de vitesse de MyWhoosh, essaie avec « Tester + » / « Tester − », puis « Valider ».
+   Les points sont mémorisés **séparément en portrait et en paysage**, et par appareil.
+4. Bouton « Autoriser en arrière-plan » : évite qu'Android mette l'appli en veille.
+5. Réveille le Click (LED bleue) : statut « Connecté : prêt », puis lance MyWhoosh.
 
-## Si la compilation échoue
+## Si ça ne marche pas
 
-Ouvre le travail en échec dans l'onglet Actions, copie les dernières lignes rouges du journal
-et envoie-les.
+« Afficher le journal » puis « Copier le journal », et colle-le dans la conversation. « Journal
+détaillé : oui » ajoute les trames reçues.
 
 ## Contenu
 
-- `app/src/main/java/app/clickbridge/ClickCrypto.java` : ECDH, HKDF, AES-CCM
-- `app/src/main/java/app/clickbridge/ClickClient.java` : Bluetooth (scan, connexion, handshake)
-- `app/src/main/java/app/clickbridge/MainActivity.java` : écran
-- `tests/` : vérification de la cryptographie contre Python (`check_crypto.py`)
+- `BridgeService` : service de premier plan (Bluetooth + notification)
+- `ClickClient` : scan, connexion, handshake ; adresse mémorisée, reconnexion automatique
+- `ClickCrypto`, `Pb` : chiffrement et décodage des trames (vérifiés contre Python dans `tests/`)
+- `TapService` : service d'accessibilité (geste de toucher)
+- `CalibrationOverlay` : pastilles + et − à glisser
+- `MainActivity`, `Bridge`, `Prefs` : écran, état partagé, réglages

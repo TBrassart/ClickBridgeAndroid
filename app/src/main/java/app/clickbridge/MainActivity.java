@@ -2,36 +2,42 @@ package app.clickbridge;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 
-public class MainActivity extends Activity implements ClickClient.Listener {
+public class MainActivity extends Activity implements Bridge.Ui {
 
     private static final int REQ_PERMS = 1;
     private static final long MIN_LIT_MS = 180;      // durée minimale d'allumage d'un indicateur
-    private static final int MAX_LOG_CHARS = 20000;
+    private static final int TEXT = Color.parseColor("#e6e6e6");
+    private static final int MUTED = Color.parseColor("#9a9a9a");
 
     private static final class Tile {
         final TextView view;
@@ -47,61 +53,190 @@ public class MainActivity extends Activity implements ClickClient.Listener {
     }
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final StringBuilder logBuf = new StringBuilder();
-    private final SimpleDateFormat clock = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
 
-    private ClickClient client;
-    private TextView statusView, batteryView, logView;
-    private ScrollView logScroll;
-    private Button toggleButton;
+    private TextView statusView, batteryView, logView, accessView, pointsView, holdView, batteryOptView;
+    private Button toggleButton, verboseButton, logButton;
     private Tile plusTile, minusTile;
+    private boolean logVisible;
+
+    // ---------------------------------------------------------------- cycle de vie
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        client = new ClickClient(this, this);
         buildUi();
-
-        if (hasPermissions()) {
-            client.start();
-        } else {
-            requestPermissions(neededPermissions(), REQ_PERMS);
-        }
     }
 
     @Override
-    protected void onDestroy() {
-        client.stop();
-        super.onDestroy();
+    protected void onStart() {
+        super.onStart();
+        Bridge b = Bridge.get();
+        b.setUi(this);
+        onStatus(b.statusText(), b.statusLevel());
+        if (b.battery() >= 0) onBattery(b.battery());
+        logView.setText(b.logText());
+        onRunning(b.isRunning());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshSetup();
+    }
+
+    @Override
+    protected void onStop() {
+        Bridge.get().setUi(null);
+        super.onStop();
     }
 
     // ---------------------------------------------------------------- permissions
 
-    private String[] neededPermissions() {
+    private List<String> bluetoothPermissions() {
+        List<String> list = new ArrayList<>();
         if (Build.VERSION.SDK_INT >= 31) {
-            return new String[]{Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT};
+            list.add(Manifest.permission.BLUETOOTH_SCAN);
+            list.add(Manifest.permission.BLUETOOTH_CONNECT);
+        } else {
+            list.add(Manifest.permission.ACCESS_FINE_LOCATION);
         }
-        return new String[]{Manifest.permission.ACCESS_FINE_LOCATION};
+        return list;
     }
 
-    private boolean hasPermissions() {
-        for (String p : neededPermissions()) {
+    private boolean hasBluetoothPermissions() {
+        for (String p : bluetoothPermissions()) {
             if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) return false;
         }
         return true;
+    }
+
+    private void requestAllPermissions() {
+        List<String> list = bluetoothPermissions();
+        if (Build.VERSION.SDK_INT >= 33) list.add(Manifest.permission.POST_NOTIFICATIONS);
+        requestPermissions(list.toArray(new String[0]), REQ_PERMS);
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != REQ_PERMS) return;
-        if (hasPermissions()) {
-            client.start();
+        if (hasBluetoothPermissions()) {
+            startBridge();
         } else {
             onStatus("Permission refusée : autorise « Appareils à proximité » "
                     + "dans les paramètres de l'appli.", ClickClient.RED);
         }
+    }
+
+    // ---------------------------------------------------------------- actions
+
+    private void startBridge() {
+        startForegroundService(new Intent(this, BridgeService.class));
+    }
+
+    private void stopBridge() {
+        startService(new Intent(this, BridgeService.class).setAction(BridgeService.ACTION_STOP));
+    }
+
+    private void toggle() {
+        if (Bridge.get().isRunning()) {
+            stopBridge();
+        } else if (hasBluetoothPermissions()) {
+            startBridge();
+        } else {
+            requestAllPermissions();
+        }
+    }
+
+    private void openAccessibilitySettings() {
+        Toast.makeText(this, "Cherche « ClickBridge » dans la liste, puis active-le.",
+                Toast.LENGTH_LONG).show();
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+    }
+
+    private void openAppDetails() {
+        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName()));
+        startActivity(i);
+    }
+
+    private void calibrate() {
+        TapService t = TapService.instance;
+        if (t == null) {
+            Toast.makeText(this, "Active d'abord le service d'accessibilité.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        t.startCalibration();
+        Toast.makeText(this, "Ouvre MyWhoosh : les pastilles + et − restent affichées.",
+                Toast.LENGTH_LONG).show();
+        moveTaskToBack(true);
+    }
+
+    private void askBatteryExemption() {
+        try {
+            startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (ActivityNotFoundException e) {
+            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        }
+    }
+
+    private void changeHold(int delta) {
+        Prefs.setHoldMs(this, Prefs.holdMs(this) + delta);
+        refreshSetup();
+    }
+
+    private void toggleVerbose() {
+        boolean v = !Prefs.verbose(this);
+        Prefs.setVerbose(this, v);
+        BridgeService s = BridgeService.current;
+        if (s != null) s.setVerbose(v);
+        refreshSetup();
+    }
+
+    private void forgetClick() {
+        BridgeService s = BridgeService.current;
+        if (s != null) {
+            s.forgetClick();
+        } else {
+            Prefs.setClickAddress(this, null);
+            Bridge.get().log("Click oublié.");
+        }
+    }
+
+    private void toggleLog() {
+        logVisible = !logVisible;
+        logView.setVisibility(logVisible ? View.VISIBLE : View.GONE);
+        logButton.setText(logVisible ? "Masquer le journal ▴" : "Afficher le journal ▾");
+    }
+
+    private void copyLog() {
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText("journal ClickBridge", Bridge.get().logText()));
+        Toast.makeText(this, "Journal copié", Toast.LENGTH_SHORT).show();
+    }
+
+    private void refreshSetup() {
+        accessView.setText(TapService.isActive()
+                ? "Service d'accessibilité : actif ✓"
+                : "Service d'accessibilité : inactif ✗");
+        accessView.setTextColor(TapService.isActive()
+                ? Color.parseColor("#22a04b") : Color.parseColor("#e04b3a"));
+
+        boolean port = Prefs.hasPoints(this, "port");
+        boolean land = Prefs.hasPoints(this, "land");
+        pointsView.setText("Points d'appui réglés : portrait " + (port ? "✓" : "✗")
+                + "  ·  paysage " + (land ? "✓" : "✗"));
+
+        holdView.setText("Durée du toucher : " + Prefs.holdMs(this) + " ms");
+        verboseButton.setText(Prefs.verbose(this) ? "Journal détaillé : oui" : "Journal détaillé : non");
+
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        boolean exempt = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        batteryOptView.setText(exempt
+                ? "Arrière-plan : autorisé sans restriction de batterie ✓"
+                : "Arrière-plan : optimisation de batterie active (conseillé : l'autoriser)");
     }
 
     // ---------------------------------------------------------------- interface
@@ -110,85 +245,141 @@ public class MainActivity extends Activity implements ClickClient.Listener {
         return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    private TextView label(String text, int sp, int color, boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(sp);
+        t.setTextColor(color);
+        if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setPadding(0, dp(3), 0, dp(3));
+        return t;
+    }
+
+    private Button button(String text, View.OnClickListener l) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setOnClickListener(l);
+        return b;
+    }
+
+    private LinearLayout section(LinearLayout parent, String title) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(12), dp(8), dp(12), dp(10));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor("#1c1c1c"));
+        bg.setCornerRadius(dp(12));
+        box.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(12);
+        box.setLayoutParams(lp);
+        box.addView(label(title, 15, Color.WHITE, true));
+        parent.addView(box);
+        return box;
+    }
+
     private void buildUi() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(Color.parseColor("#121212"));
+        scroll.setFillViewport(true);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#121212"));
-        root.setPadding(dp(16), dp(16), dp(16), dp(16));
-        root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+        root.setPadding(dp(16), dp(16), dp(16), dp(24));
+        scroll.addView(root);
+        scroll.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
             @Override public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
-                v.setPadding(dp(16) + insets.getSystemWindowInsetLeft(),
-                        dp(16) + insets.getSystemWindowInsetTop(),
-                        dp(16) + insets.getSystemWindowInsetRight(),
-                        dp(16) + insets.getSystemWindowInsetBottom());
+                v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                        insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
                 return insets;
             }
         });
 
-        statusView = new TextView(this);
-        statusView.setTextSize(18);
-        statusView.setTypeface(Typeface.DEFAULT_BOLD);
-        statusView.setTextColor(Color.parseColor("#8a8a8a"));
-        statusView.setText("…");
+        statusView = label("…", 18, MUTED, true);
         root.addView(statusView);
-
-        batteryView = new TextView(this);
-        batteryView.setTextSize(14);
-        batteryView.setTextColor(Color.parseColor("#cfcfcf"));
-        batteryView.setText("Batterie : –");
-        batteryView.setPadding(0, dp(4), 0, dp(12));
+        batteryView = label("Batterie : –", 14, TEXT, false);
         root.addView(batteryView);
 
         LinearLayout tiles = new LinearLayout(this);
         tiles.setOrientation(LinearLayout.HORIZONTAL);
+        tiles.setPadding(0, dp(10), 0, 0);
         plusTile = makeTile("+", Color.parseColor("#1f9d4d"));
         minusTile = makeTile("−", Color.parseColor("#2a6fdb"));
         tiles.addView(plusTile.view);
         tiles.addView(minusTile.view);
         root.addView(tiles);
 
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setPadding(0, dp(12), 0, dp(8));
-        toggleButton = new Button(this);
-        toggleButton.setText("Arrêter");
-        toggleButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                toggle();
-            }
+        toggleButton = button("Démarrer", new View.OnClickListener() {
+            @Override public void onClick(View v) { toggle(); }
         });
-        Button copyButton = new Button(this);
-        copyButton.setText("Copier le journal");
-        copyButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("journal ClickBridge", logBuf.toString()));
-            }
-        });
-        buttons.addView(toggleButton);
-        buttons.addView(copyButton);
-        root.addView(buttons);
+        root.addView(toggleButton);
 
-        logView = new TextView(this);
-        logView.setTextSize(11);
+        LinearLayout taps = section(root, "Appuis tactiles sur MyWhoosh");
+        accessView = label("", 14, TEXT, false);
+        taps.addView(accessView);
+        taps.addView(button("Ouvrir les réglages d'accessibilité", new View.OnClickListener() {
+            @Override public void onClick(View v) { openAccessibilitySettings(); }
+        }));
+        taps.addView(button("Infos de l'appli (« paramètres restreints »)", new View.OnClickListener() {
+            @Override public void onClick(View v) { openAppDetails(); }
+        }));
+        pointsView = label("", 14, TEXT, false);
+        taps.addView(pointsView);
+        taps.addView(button("Régler les points d'appui", new View.OnClickListener() {
+            @Override public void onClick(View v) { calibrate(); }
+        }));
+        holdView = label("", 14, TEXT, false);
+        taps.addView(holdView);
+        LinearLayout holdRow = new LinearLayout(this);
+        holdRow.setOrientation(LinearLayout.HORIZONTAL);
+        holdRow.addView(button("− 10 ms", new View.OnClickListener() {
+            @Override public void onClick(View v) { changeHold(-10); }
+        }));
+        holdRow.addView(button("+ 10 ms", new View.OnClickListener() {
+            @Override public void onClick(View v) { changeHold(10); }
+        }));
+        taps.addView(holdRow);
+
+        LinearLayout bg = section(root, "Arrière-plan et appairage");
+        batteryOptView = label("", 14, TEXT, false);
+        bg.addView(batteryOptView);
+        bg.addView(button("Autoriser en arrière-plan", new View.OnClickListener() {
+            @Override public void onClick(View v) { askBatteryExemption(); }
+        }));
+        bg.addView(button("Oublier le Click (refaire un appairage)", new View.OnClickListener() {
+            @Override public void onClick(View v) { forgetClick(); }
+        }));
+
+        LinearLayout diag = section(root, "Diagnostic");
+        verboseButton = button("", new View.OnClickListener() {
+            @Override public void onClick(View v) { toggleVerbose(); }
+        });
+        diag.addView(verboseButton);
+        logButton = button("Afficher le journal ▾", new View.OnClickListener() {
+            @Override public void onClick(View v) { toggleLog(); }
+        });
+        diag.addView(logButton);
+        diag.addView(button("Copier le journal", new View.OnClickListener() {
+            @Override public void onClick(View v) { copyLog(); }
+        }));
+        logView = label("", 11, Color.parseColor("#d0d0d0"), false);
         logView.setTypeface(Typeface.MONOSPACE);
-        logView.setTextColor(Color.parseColor("#d0d0d0"));
         logView.setTextIsSelectable(true);
-        logScroll = new ScrollView(this);
-        logScroll.addView(logView);
-        root.addView(logScroll, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        logView.setVisibility(View.GONE);
+        diag.addView(logView);
 
-        setContentView(root);
+        setContentView(scroll);
     }
 
     private Tile makeTile(String symbol, int onColor) {
         TextView v = new TextView(this);
         v.setText(symbol);
-        v.setTextSize(64);
+        v.setTextSize(56);
         v.setTypeface(Typeface.DEFAULT_BOLD);
         v.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(140), 1f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(110), 1f);
         lp.setMargins(dp(6), 0, dp(6), 0);
         v.setLayoutParams(lp);
         Tile t = new Tile(v, onColor);
@@ -201,19 +392,7 @@ public class MainActivity extends Activity implements ClickClient.Listener {
         d.setCornerRadius(dp(16));
         d.setColor(t.lit ? t.onColor : Color.parseColor("#2d2d2d"));
         t.view.setBackground(d);
-        t.view.setTextColor(t.lit ? Color.WHITE : Color.parseColor("#9a9a9a"));
-    }
-
-    private void toggle() {
-        if (client.isRunning()) {
-            client.stop();
-            toggleButton.setText("Démarrer");
-        } else if (hasPermissions()) {
-            client.start();
-            toggleButton.setText("Arrêter");
-        } else {
-            requestPermissions(neededPermissions(), REQ_PERMS);
-        }
+        t.view.setTextColor(t.lit ? Color.WHITE : MUTED);
     }
 
     private void update(final Tile t, boolean pressed) {
@@ -240,7 +419,7 @@ public class MainActivity extends Activity implements ClickClient.Listener {
         }
     }
 
-    // ---------------------------------------------------------------- ClickClient.Listener
+    // ---------------------------------------------------------------- Bridge.Ui
 
     @Override
     public void onStatus(String text, int level) {
@@ -249,24 +428,15 @@ public class MainActivity extends Activity implements ClickClient.Listener {
             case ClickClient.GREEN: color = Color.parseColor("#22a04b"); break;
             case ClickClient.ORANGE: color = Color.parseColor("#e08a00"); break;
             case ClickClient.RED: color = Color.parseColor("#e04b3a"); break;
-            default: color = Color.parseColor("#8a8a8a");
+            default: color = MUTED;
         }
         statusView.setText(text);
         statusView.setTextColor(color);
     }
 
     @Override
-    public void onLog(String text) {
-        logBuf.append(clock.format(new Date())).append("  ").append(text).append('\n');
-        if (logBuf.length() > MAX_LOG_CHARS) {
-            logBuf.delete(0, logBuf.length() - MAX_LOG_CHARS);
-        }
-        logView.setText(logBuf);
-        logScroll.post(new Runnable() {
-            @Override public void run() {
-                logScroll.fullScroll(View.FOCUS_DOWN);
-            }
-        });
+    public void onLog(String line) {
+        logView.append(line + "\n");
     }
 
     @Override
@@ -278,5 +448,11 @@ public class MainActivity extends Activity implements ClickClient.Listener {
     @Override
     public void onBattery(int percent) {
         batteryView.setText("Batterie : " + percent + " %");
+    }
+
+    @Override
+    public void onRunning(boolean running) {
+        toggleButton.setText(running ? "Arrêter" : "Démarrer");
+        if (!running) batteryView.setText("Batterie : –");
     }
 }

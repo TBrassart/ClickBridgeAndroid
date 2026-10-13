@@ -26,7 +26,11 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.UUID;
 
-/** Connexion Bluetooth au Zwift Click V1 : handshake chiffré puis lecture des boutons. */
+/**
+ * Connexion Bluetooth au Zwift Click V1 : handshake chiffré puis lecture des boutons.
+ * Après un premier appairage réussi, l'adresse est mémorisée et la reconnexion se fait par
+ * « connexion automatique » du système, sans scan permanent (moins de batterie).
+ */
 public final class ClickClient {
 
     public interface Listener {
@@ -46,6 +50,7 @@ public final class ClickClient {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private static final int ZWIFT_COMPANY_ID = 0x094A;
     private static final int TYPE_CLICK = 0x37, TYPE_BATTERY = 0x19;
+    private static final String WAIT_TEXT = "En attente du Click… appuie sur un bouton (LED bleue)";
 
     private final Context context;
     private final Listener ui;
@@ -59,7 +64,7 @@ public final class ClickClient {
     private boolean scanning;
     private boolean ready;
     private boolean plusDown, minusDown;
-    private boolean verbose = true;
+    private volatile boolean verbose;
 
     public ClickClient(Context context, Listener ui) {
         this.context = context.getApplicationContext();
@@ -75,12 +80,12 @@ public final class ClickClient {
     public void start() {
         if (running) return;
         running = true;
-        startScan();
+        startOrConnect();
     }
 
     public void stop() {
         running = false;
-        main.removeCallbacks(startScanRunnable);
+        main.removeCallbacks(reconnectRunnable);
         main.removeCallbacks(handshakeTimeout);
         stopScan();
         closeGatt();
@@ -88,31 +93,68 @@ public final class ClickClient {
         postButtons(false, false);
     }
 
+    /** Oublie le Click mémorisé : le prochain démarrage refera un scan. */
+    public void forget() {
+        Prefs.setClickAddress(context, null);
+        log("Click oublié : la prochaine connexion refera une recherche.");
+        if (running) {
+            main.removeCallbacks(reconnectRunnable);
+            stopScan();
+            closeGatt();
+            startOrConnect();
+        }
+    }
+
     public boolean isRunning() {
         return running;
     }
 
-    // ---------------------------------------------------------------- scan
+    private BluetoothAdapter adapter() {
+        BluetoothManager bm = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+        return bm == null ? null : bm.getAdapter();
+    }
 
-    private final Runnable startScanRunnable = new Runnable() {
+    private final Runnable reconnectRunnable = new Runnable() {
         @Override public void run() {
-            startScan();
+            startOrConnect();
         }
     };
 
-    private void startScan() {
+    private void scheduleReconnect(long delayMs) {
+        main.removeCallbacks(reconnectRunnable);
+        if (running) main.postDelayed(reconnectRunnable, delayMs);
+    }
+
+    private void startOrConnect() {
         if (!running) return;
-        BluetoothManager bm = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        BluetoothAdapter adapter = bm == null ? null : bm.getAdapter();
+        BluetoothAdapter adapter = adapter();
         if (adapter == null || !adapter.isEnabled()) {
             status("Bluetooth désactivé : active-le, l'appli réessaie toute seule.", RED);
-            main.postDelayed(startScanRunnable, 3000);
+            scheduleReconnect(3000);
             return;
         }
+        String address = Prefs.clickAddress(context);
+        if (address == null) {
+            startScan(adapter);
+            return;
+        }
+        try {
+            BluetoothDevice device = adapter.getRemoteDevice(address);
+            status(WAIT_TEXT, ORANGE);
+            connect(device, true);
+        } catch (IllegalArgumentException e) {
+            Prefs.setClickAddress(context, null);
+            startScan(adapter);
+        }
+    }
+
+    // ---------------------------------------------------------------- scan (premier appairage)
+
+    private void startScan(BluetoothAdapter adapter) {
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) {
             status("Scanner Bluetooth indisponible.", RED);
-            main.postDelayed(startScanRunnable, 3000);
+            scheduleReconnect(3000);
             return;
         }
         try {
@@ -149,26 +191,27 @@ public final class ClickClient {
             if (!match) return;
             stopScan();
             log("Click trouvé : " + result.getDevice().getAddress());
-            connect(result.getDevice());
+            status("Click trouvé, connexion…", ORANGE);
+            connect(result.getDevice(), false);
         }
 
         @Override public void onScanFailed(int errorCode) {
             scanning = false;
             log("Échec du scan (code " + errorCode + ")");
             status("Scan Bluetooth impossible (code " + errorCode + ").", RED);
-            if (running) main.postDelayed(startScanRunnable, 3000);
+            scheduleReconnect(3000);
         }
     };
 
     // ---------------------------------------------------------------- connexion
 
-    private void connect(BluetoothDevice device) {
-        status("Click trouvé, connexion…", ORANGE);
+    private void connect(BluetoothDevice device, boolean autoConnect) {
+        closeGatt();
         ready = false;
         plusDown = false;
         minusDown = false;
         try {
-            gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+            gatt = device.connectGatt(context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE);
         } catch (SecurityException e) {
             status("Permission Bluetooth manquante.", RED);
         }
@@ -194,7 +237,7 @@ public final class ClickClient {
             status("Échange des clés impossible : le Click est peut-être déjà connecté "
                     + "à une autre appli, ou son firmware est différent.", RED);
             closeGatt();
-            main.postDelayed(startScanRunnable, 2000);
+            scheduleReconnect(3000);
         }
     };
 
@@ -208,6 +251,7 @@ public final class ClickClient {
                 if (!g.requestMtu(247)) g.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 log("Déconnecté (statut " + statusCode + ")");
+                main.removeCallbacks(handshakeTimeout);
                 try {
                     g.close();
                 } catch (Exception ignored) {
@@ -217,7 +261,7 @@ public final class ClickClient {
                 postButtons(false, false);
                 if (running) {
                     status("Click déconnecté : réveille-le (appui sur un bouton)", ORANGE);
-                    main.postDelayed(startScanRunnable, 2000);
+                    scheduleReconnect(1500);
                 }
             }
         }
@@ -237,9 +281,11 @@ public final class ClickClient {
                 status("Service Zwift introuvable : ce n'est peut-être pas un Click V1.", RED);
                 return;
             }
-            for (BluetoothGattCharacteristic c : s.getCharacteristics()) {
-                log("  caractéristique " + c.getUuid().toString().substring(0, 8)
-                        + " propriétés=" + c.getProperties());
+            if (verbose) {
+                for (BluetoothGattCharacteristic c : s.getCharacteristics()) {
+                    log("  caractéristique " + c.getUuid().toString().substring(0, 8)
+                            + " propriétés=" + c.getProperties());
+                }
             }
             try {
                 crypto = new ClickCrypto();
@@ -262,7 +308,9 @@ public final class ClickClient {
         }
 
         @Override public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic c, int statusCode) {
-            log("Écriture du handshake : statut " + statusCode);
+            if (verbose || statusCode != BluetoothGatt.GATT_SUCCESS) {
+                log("Écriture du handshake : statut " + statusCode);
+            }
         }
 
         // Anciennes versions d'Android (jusqu'à 12)
@@ -315,7 +363,7 @@ public final class ClickClient {
         rx.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         rx.setValue(crypto.hello());
         boolean ok = g.writeCharacteristic(rx);
-        log("Handshake envoyé : " + ok);
+        if (verbose || !ok) log("Handshake envoyé : " + ok);
         status("Connecté, échange des clés…", ORANGE);
         main.removeCallbacks(handshakeTimeout);
         main.postDelayed(handshakeTimeout, 15000);
@@ -337,7 +385,7 @@ public final class ClickClient {
         if (SYNC_TX.equals(uuid)) {
             try {
                 if (crypto != null && crypto.accept(data)) {
-                    log("Clé de l'appareil reçue");
+                    if (verbose) log("Clé de l'appareil reçue");
                 } else {
                     log("Réponse sync_tx inattendue (" + data.length + " octets) : " + hex(data));
                 }
@@ -360,6 +408,14 @@ public final class ClickClient {
             if (!ready) {
                 ready = true;
                 main.removeCallbacks(handshakeTimeout);
+                BluetoothGatt g = gatt;
+                if (g != null) {
+                    String address = g.getDevice().getAddress();
+                    if (!address.equals(Prefs.clickAddress(context))) {
+                        Prefs.setClickAddress(context, address);
+                        log("Click mémorisé : " + address);
+                    }
+                }
                 status("Connecté : prêt", GREEN);
             }
         } else {                                      // trame courte, en clair
