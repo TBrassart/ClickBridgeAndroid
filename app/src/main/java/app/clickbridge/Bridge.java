@@ -32,6 +32,11 @@ final class Bridge {
         this.ui = ui;
     }
 
+    /** Retire l'écouteur seulement s'il est encore le nôtre (l'écran suivant a pu s'enregistrer). */
+    void clearUi(Ui ui) {
+        if (this.ui == ui) this.ui = null;
+    }
+
     String statusText() { return statusText; }
     int statusLevel() { return statusLevel; }
     int battery() { return battery; }

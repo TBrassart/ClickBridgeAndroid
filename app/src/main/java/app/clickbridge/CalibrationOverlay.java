@@ -57,8 +57,8 @@ final class CalibrationOverlay {
         root = new FrameLayout(svc);
         root.setBackgroundColor(Color.argb(70, 0, 0, 0));
 
-        plusMarker = makeMarker("+", Color.parseColor("#1f9d4d"));
-        minusMarker = makeMarker("−", Color.parseColor("#2a6fdb"));
+        plusMarker = makeMarker("+", Color.parseColor("#22C55E"));
+        minusMarker = makeMarker("−", Color.parseColor("#6D5BFF"));
         root.addView(plusMarker, new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.START));
         root.addView(minusMarker, new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.START));
 

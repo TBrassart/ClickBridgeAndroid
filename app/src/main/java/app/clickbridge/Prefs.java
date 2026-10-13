@@ -27,6 +27,15 @@ final class Prefs {
         sp(c).edit().putBoolean("verbose", v).apply();
     }
 
+    /** 0 = suit le téléphone, 1 = sombre, 2 = clair. */
+    static int theme(Context c) {
+        return sp(c).getInt("theme", 0);
+    }
+
+    static void setTheme(Context c, int mode) {
+        sp(c).edit().putInt("theme", mode).apply();
+    }
+
     static String clickAddress(Context c) {
         return sp(c).getString("click_address", null);
     }
