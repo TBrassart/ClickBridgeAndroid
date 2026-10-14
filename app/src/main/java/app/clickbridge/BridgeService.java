@@ -20,6 +20,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
 
     static final String ACTION_STOP = "app.clickbridge.STOP";
     static final String ACTION_CALIBRATE = "app.clickbridge.CALIBRATE";
+    static final String ACTION_REPOST = "app.clickbridge.REPOST";
     private static final String CHANNEL = "clickbridge";
     private static final int NOTIF_ID = 1;
 
@@ -124,6 +125,9 @@ public class BridgeService extends Service implements ClickClient.Listener {
                 new Intent(this, BridgeService.class).setAction(ACTION_CALIBRATE), immutable);
         PendingIntent stop = PendingIntent.getService(this, 2,
                 new Intent(this, BridgeService.class).setAction(ACTION_STOP), immutable);
+                // Android 14+ permet de balayer cette notification : on la réaffiche aussitôt
+        PendingIntent dismissed = PendingIntent.getService(this, 3,
+                new Intent(this, BridgeService.class).setAction(ACTION_REPOST), immutable);
 
         Notification.Action calibrateAction = new Notification.Action.Builder(
                 Icon.createWithResource(this, android.R.drawable.ic_menu_manage),
@@ -138,6 +142,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
                 .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
                 .setContentIntent(open)
                 .setOngoing(true)
+                .setDeleteIntent(dismissed)
                 .setOnlyAlertOnce(true)
                 .addAction(calibrateAction)
                 .addAction(stopAction)
