@@ -8,7 +8,8 @@ import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
 import android.util.DisplayMetrics;
-import android.view.WindowManager;
+import android.hardware.display.DisplayManager;
+import android.view.Display;
 import android.view.accessibility.AccessibilityEvent;
 
 /**
@@ -45,8 +46,8 @@ public class TapService extends AccessibilityService {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        // la rotation change les coordonnées : on referme le réglage en cours
-        if (overlay != null) overlay.hide();
+        // la rotation change l'écran : on réaffiche le calque de réglage dans la nouvelle orientation
+        if (overlay != null) overlay.restart();
     }
 
     @Override
@@ -60,20 +61,26 @@ public class TapService extends AccessibilityService {
     // ---------------------------------------------------------------- écran
 
     /** Taille réelle de l'écran dans l'orientation actuelle : {largeur, hauteur} en pixels. */
-    int[] screenSize() {
-        WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        if (Build.VERSION.SDK_INT >= 30) {
-            Rect b = wm.getMaximumWindowMetrics().getBounds();
-            return new int[]{b.width(), b.height()};
-        }
-        DisplayMetrics dm = new DisplayMetrics();
-        wm.getDefaultDisplay().getRealMetrics(dm);
-        return new int[]{dm.widthPixels, dm.heightPixels};
+        int[] screenSize() {
+        // On interroge l'écran lui-même : la configuration du service n'est pas toujours à jour
+        // juste après une rotation.
+        DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        Display display = dm.getDisplay(Display.DEFAULT_DISPLAY);
+        DisplayMetrics m = new DisplayMetrics();
+        display.getRealMetrics(m);
+        return new int[]{m.widthPixels, m.heightPixels};
     }
 
     String orientationKey() {
         int[] s = screenSize();
         return s[0] > s[1] ? "land" : "port";
+    }
+
+    /** Referme le volet des notifications (Android 12 et plus) ; sans effet s'il est déjà fermé. */
+    void closeNotificationShade() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE);
+        }
     }
 
     // ---------------------------------------------------------------- toucher
