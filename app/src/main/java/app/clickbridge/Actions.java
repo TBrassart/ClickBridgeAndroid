@@ -80,9 +80,8 @@ final class Actions {
             return false;
         }
         t.startCalibration();
-        Toast.makeText(a, "Ouvre MyWhoosh : les pastilles + et − restent affichées.",
+        Toast.makeText(a, "Ouvre MyWhoosh (applications récentes) : les pastilles restent affichées.",
                 Toast.LENGTH_LONG).show();
-        a.moveTaskToBack(true);
         return true;
     }
 
