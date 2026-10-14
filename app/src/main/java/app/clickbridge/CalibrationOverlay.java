@@ -1,6 +1,7 @@
 package app.clickbridge;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
@@ -54,7 +55,16 @@ final class CalibrationOverlay {
         final int[] screen = svc.screenSize();
         final String orient = svc.orientationKey();
 
-        root = new FrameLayout(svc);
+        Bridge.get().log("Calque de réglage affiché : " + orient + " " + screen[0] + "x" + screen[1]);
+
+        root = new FrameLayout(svc) {
+            @Override protected void onConfigurationChanged(Configuration newConfig) {
+                super.onConfigurationChanged(newConfig);
+                post(new Runnable() {
+                    @Override public void run() { restart(); }
+                });
+            }
+        };
         root.setBackgroundColor(Color.argb(70, 0, 0, 0));
 
         plusMarker = makeMarker("+", Color.parseColor("#22C55E"));
@@ -93,7 +103,27 @@ final class CalibrationOverlay {
         });
     }
 
+    private final Runnable showAgain = new Runnable() {
+        @Override public void run() {
+            show();
+        }
+    };
+
+    /** Fermeture définitive (Valider, Annuler, service arrêté). */
     void hide() {
+        handler.removeCallbacks(showAgain);
+        removeView();
+    }
+
+    /** Après une rotation : retire le calque puis le réaffiche dans la nouvelle orientation. */
+    void restart() {
+        if (root == null) return;               // aucun réglage en cours
+        removeView();
+        handler.removeCallbacks(showAgain);
+        handler.postDelayed(showAgain, 600);    // laisse la rotation se terminer
+    }
+
+    private void removeView() {
         if (root == null) return;
         try {
             wm.removeView(root);
