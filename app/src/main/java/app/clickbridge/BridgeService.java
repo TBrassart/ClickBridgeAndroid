@@ -68,6 +68,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
         if (ACTION_CALIBRATE.equals(action)) {
             TapService t = TapService.instance;
             if (t != null) {
+                t.closeNotificationShade();
                 t.startCalibration();
             } else {
                 Bridge.get().log("Active d'abord le service d'accessibilité de ClickBridge.");
