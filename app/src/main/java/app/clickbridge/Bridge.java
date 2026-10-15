@@ -12,6 +12,9 @@ final class Bridge {
         void onButtons(boolean plus, boolean minus);
         void onBattery(int percent);
         void onRunning(boolean running);
+
+        /** Le profil actif ou la liste des profils a changé. */
+        default void onProfileChanged() { }
     }
 
     private static final Bridge INSTANCE = new Bridge();
@@ -64,6 +67,10 @@ final class Bridge {
 
     void buttons(boolean plus, boolean minus) {
         if (ui != null) ui.onButtons(plus, minus);
+    }
+
+    void profileChanged() {
+        if (ui != null) ui.onProfileChanged();
     }
 
     void running(boolean r) {

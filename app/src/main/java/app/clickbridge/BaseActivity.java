@@ -11,7 +11,9 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.Button;
 import android.widget.ScrollView;
+import android.widget.Toast;
 import android.widget.TextView;
 
 /** Fond en dégradé, défilement, marges système et thème communs à tous les écrans. */
@@ -100,5 +102,35 @@ abstract class BaseActivity extends Activity {
         sub.setPadding(0, dp(4), 0, 0);
         box.addView(sub);
         return box;
+    }
+
+    /** Deux boutons côte à côte, à parts égales. */
+    protected LinearLayout buttonRow(Button a, Button b) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams la = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        la.topMargin = dp(8);
+        la.rightMargin = dp(6);
+        LinearLayout.LayoutParams lb = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lb.topMargin = dp(8);
+        lb.leftMargin = dp(6);
+        row.addView(a, la);
+        row.addView(b, lb);
+        return row;
+    }
+
+    /** Ajoute les boutons à une carte, deux par ligne (le dernier seul est pleine largeur). */
+    protected void addButtons(LinearLayout card, Button... buttons) {
+        for (int i = 0; i < buttons.length; i += 2) {
+            if (i + 1 < buttons.length) {
+                card.addView(buttonRow(buttons[i], buttons[i + 1]));
+            } else {
+                card.addView(buttons[i]);
+            }
+        }
+    }
+
+    protected void toast(String text) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 }

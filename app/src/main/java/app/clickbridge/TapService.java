@@ -5,10 +5,10 @@ import android.accessibilityservice.GestureDescription;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Path;
+import android.hardware.display.DisplayManager;
 import android.graphics.Rect;
 import android.os.Build;
 import android.util.DisplayMetrics;
-import android.hardware.display.DisplayManager;
 import android.view.Display;
 import android.view.accessibility.AccessibilityEvent;
 
@@ -61,7 +61,7 @@ public class TapService extends AccessibilityService {
     // ---------------------------------------------------------------- écran
 
     /** Taille réelle de l'écran dans l'orientation actuelle : {largeur, hauteur} en pixels. */
-        int[] screenSize() {
+    int[] screenSize() {
         // On interroge l'écran lui-même : la configuration du service n'est pas toujours à jour
         // juste après une rotation.
         DisplayManager dm = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);

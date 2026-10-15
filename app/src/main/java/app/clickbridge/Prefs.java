@@ -3,21 +3,57 @@ package app.clickbridge;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** Réglages enregistrés : durée du toucher, adresse du Click, points d'appui par orientation. */
+/** Réglages enregistrés. Les points d'appui sont portés par les profils (voir Profiles). */
 final class Prefs {
     private Prefs() {}
 
-    private static SharedPreferences sp(Context c) {
+    static SharedPreferences sp(Context c) {
         return c.getApplicationContext().getSharedPreferences("clickbridge", Context.MODE_PRIVATE);
     }
+
+    private static int clamp(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    // ---------------------------------------------------------------- toucher
 
     static int holdMs(Context c) {
         return sp(c).getInt("hold_ms", 50);
     }
 
     static void setHoldMs(Context c, int ms) {
-        sp(c).edit().putInt("hold_ms", Math.max(10, Math.min(500, ms))).apply();
+        sp(c).edit().putInt("hold_ms", clamp(ms, 10, 500)).apply();
     }
+
+    // ---------------------------------------------------------------- appui continu
+
+    static boolean repeatEnabled(Context c) {
+        return sp(c).getBoolean("repeat_enabled", false);
+    }
+
+    static void setRepeatEnabled(Context c, boolean on) {
+        sp(c).edit().putBoolean("repeat_enabled", on).apply();
+    }
+
+    /** Délai avant la première répétition (ms). */
+    static int repeatDelay(Context c) {
+        return sp(c).getInt("repeat_delay", 400);
+    }
+
+    static void setRepeatDelay(Context c, int ms) {
+        sp(c).edit().putInt("repeat_delay", clamp(ms, 100, 3000)).apply();
+    }
+
+    /** Temps entre deux répétitions (ms). */
+    static int repeatInterval(Context c) {
+        return sp(c).getInt("repeat_interval", 120);
+    }
+
+    static void setRepeatInterval(Context c, int ms) {
+        sp(c).edit().putInt("repeat_interval", clamp(ms, 50, 1000)).apply();
+    }
+
+    // ---------------------------------------------------------------- divers
 
     static boolean verbose(Context c) {
         return sp(c).getBoolean("verbose", false);
@@ -46,20 +82,26 @@ final class Prefs {
         e.apply();
     }
 
+    // ---------------------------------------------------------------- points : profil actif
+
     /** @param orient "port" ou "land" ; renvoie {x, y} en fractions de l'écran, ou null. */
     static float[] point(Context c, boolean plus, String orient) {
+        return Profiles.point(c, plus, orient);
+    }
+
+    static void setPoint(Context c, boolean plus, String orient, float x, float y) {
+        Profiles.setPoint(c, plus, orient, x, y);
+    }
+
+    static boolean hasPoints(Context c, String orient) {
+        return Profiles.hasPoints(c, orient);
+    }
+
+    /** Anciens points (versions 0.2 et 0.3, avant les profils), pour la migration. */
+    static float[] legacyPoint(Context c, boolean plus, String orient) {
         String k = "pt_" + (plus ? "plus" : "minus") + "_" + orient;
         SharedPreferences p = sp(c);
         if (!p.contains(k + "_x") || !p.contains(k + "_y")) return null;
         return new float[]{p.getFloat(k + "_x", 0f), p.getFloat(k + "_y", 0f)};
-    }
-
-    static void setPoint(Context c, boolean plus, String orient, float x, float y) {
-        String k = "pt_" + (plus ? "plus" : "minus") + "_" + orient;
-        sp(c).edit().putFloat(k + "_x", x).putFloat(k + "_y", y).apply();
-    }
-
-    static boolean hasPoints(Context c, String orient) {
-        return point(c, true, orient) != null && point(c, false, orient) != null;
     }
 }

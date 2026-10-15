@@ -1,5 +1,7 @@
 package app.clickbridge;
 
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -19,6 +21,7 @@ import android.widget.TextView;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 
 /** Accueil : état de la connexion, indicateurs + et −, démarrage, état de la configuration. */
 public class MainActivity extends BaseActivity implements Bridge.Ui {
@@ -44,6 +47,7 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView statusText, batteryText, chipBt, chipAccess, chipPoints, chipBg;
+    private TextView profileName, profileInfo, historyText;
     private BatteryBar batteryBar;
     private Button startButton;
     private Tile plusTile, minusTile;
@@ -69,6 +73,8 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
     protected void onResume() {
         super.onResume();
         refreshChips();
+        refreshProfile();
+        refreshHistory();
     }
 
     @Override
@@ -146,6 +152,25 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         ((LinearLayout.LayoutParams) startButton.getLayoutParams()).topMargin = dp(14);
         content.addView(startButton);
 
+        // profil actif
+        LinearLayout prof = Ui.card(this, theme);
+        prof.addView(Ui.text(this, "PROFIL ACTIF", 11, theme.muted, true));
+        profileName = Ui.text(this, "", 20, theme.text, true);
+        profileName.setPadding(0, dp(4), 0, 0);
+        prof.addView(profileName);
+        profileInfo = Ui.text(this, "", 12, theme.muted, false);
+        prof.addView(profileInfo);
+        addButtons(prof,
+                Ui.soft(this, theme, "Changer de profil", new View.OnClickListener() {
+                    @Override public void onClick(View v) { chooseProfile(); }
+                }),
+                Ui.soft(this, theme, "Gérer les profils", new View.OnClickListener() {
+                    @Override public void onClick(View v) {
+                        startActivity(new Intent(MainActivity.this, ProfilesActivity.class));
+                    }
+                }));
+        content.addView(prof);
+
         // assistant : bouton bien visible
         content.addView(wizardButton("✨  Assistant de configuration",
                 "Permissions, accessibilité, points d'appui… pas à pas, avec des explications.",
@@ -164,7 +189,20 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         chipBg = addChip(cfg);
         content.addView(cfg);
 
-        TextView foot = Ui.text(this, "Version 0.3  ·  Zwift Click V1", 12, theme.muted, false);
+        // historique
+        LinearLayout hist = Ui.card(this, theme);
+        hist.addView(Ui.text(this, "HISTORIQUE", 11, theme.muted, true));
+        historyText = Ui.text(this, "", 14, theme.text, false);
+        historyText.setPadding(0, dp(4), 0, 0);
+        hist.addView(historyText);
+        hist.addView(Ui.soft(this, theme, "Voir l'historique des sessions", new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(MainActivity.this, HistoryActivity.class));
+            }
+        }));
+        content.addView(hist);
+
+        TextView foot = Ui.text(this, "Version 0.4  ·  Zwift Click V1", 12, theme.muted, false);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, dp(18), 0, 0);
         content.addView(foot, Ui.fullTop(this, 0));
@@ -272,12 +310,51 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         String orient = Actions.orientationName(this);
         Ui.setPill(this, chipPoints,
                 points ? "✓  Points d'appui réglés (" + orient + ")"
-                        : "✗  Points d'appui à régler (" + orient + ")",
+                        : "✗  Points d'appui à régler (" + orient + ")  ·  profil " + Profiles.active(this).name,
                 points ? theme.ok : theme.err);
 
         boolean bg = Actions.isBatteryExempt(this);
         Ui.setPill(this, chipBg, bg ? "✓  Arrière-plan autorisé" : "!  Arrière-plan : à autoriser (conseillé)",
                 bg ? theme.ok : theme.warn);
+    }
+
+    private void refreshProfile() {
+        Profile p = Profiles.active(this);
+        profileName.setText(p.name);
+        boolean isDefault = p.id.equals(Profiles.defaultId(this));
+        profileInfo.setText((isDefault ? "Profil par défaut  ·  " : "")
+                + "portrait " + (p.hasPoints("port") ? "✓" : "✗")
+                + "  ·  paysage " + (p.hasPoints("land") ? "✓" : "✗"));
+    }
+
+    private void chooseProfile() {
+        final List<Profile> list = Profiles.all(this);
+        String activeId = Profiles.active(this).id;
+        CharSequence[] names = new CharSequence[list.size()];
+        for (int i = 0; i < names.length; i++) {
+            names[i] = (list.get(i).id.equals(activeId) ? "✓  " : "      ") + list.get(i).name;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Changer de profil")
+                .setItems(names, new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) {
+                        Profiles.setActive(MainActivity.this, list.get(which).id);
+                    }
+                })
+                .show();
+    }
+
+    private void refreshHistory() {
+        List<SessionBook.Session> sessions = SessionLog.list(this);
+        if (sessions.isEmpty()) {
+            historyText.setText("Aucune session pour le moment.");
+            return;
+        }
+        SessionBook.Session last = sessions.get(0);
+        long now = System.currentTimeMillis();
+        historyText.setText("Dernière session : " + SessionBook.formatDate(last.start) + "\n"
+                + SessionBook.formatDuration(SessionBook.duration(last, now))
+                + "  ·  + " + last.plus + "  ·  − " + last.minus);
     }
 
     // ---------------------------------------------------------------- Bridge.Ui
@@ -310,6 +387,12 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
     public void onBattery(int percent) {
         batteryBar.setLevel(percent);
         batteryText.setText(percent < 0 ? "Batterie du Click : –" : "Batterie du Click : " + percent + " %");
+    }
+
+    @Override
+    public void onProfileChanged() {
+        refreshProfile();
+        refreshChips();
     }
 
     @Override

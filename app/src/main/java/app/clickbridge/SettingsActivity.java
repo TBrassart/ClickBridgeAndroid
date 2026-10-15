@@ -2,18 +2,26 @@ package app.clickbridge;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** Réglages : chaque option est accompagnée d'une explication. */
 public class SettingsActivity extends BaseActivity implements Bridge.Ui {
 
-    private TextView pointsPill, holdValue, accessPill, bgPill, addressText, logView;
-    private Button verboseButton, logButton;
+    private interface IntPref {
+        int get();
+        void set(int value);
+    }
+
+    private final List<Runnable> updaters = new ArrayList<>();
+    private TextView profileText, pointsPill, accessPill, bgPill, addressText, logView;
+    private Button repeatButton, verboseButton, logButton;
     private final Button[] themeButtons = new Button[3];
     private boolean logVisible;
 
@@ -29,7 +37,9 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
                     }
                 }));
 
+        buildLinksCard();
         buildTapsCard();
+        buildRepeatCard();
         buildAccessibilityCard();
         buildBackgroundCard();
         buildClickCard();
@@ -56,7 +66,7 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
         super.onStop();
     }
 
-    // ---------------------------------------------------------------- cartes
+    // ---------------------------------------------------------------- outils de construction
 
     private LinearLayout section(String title, String intro) {
         LinearLayout card = Ui.card(this, theme);
@@ -75,44 +85,101 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
         return t;
     }
 
+    /** Valeur numérique réglable par pas, avec son explication. */
+    private void addStepper(LinearLayout card, String title, final String unit, final int step,
+                            final IntPref pref, String explanation) {
+        TextView t = Ui.text(this, title, 15, theme.text, true);
+        t.setPadding(0, dp(16), 0, 0);
+        card.addView(t);
+        final TextView value = Ui.text(this, "", 14, theme.cyan, true);
+        card.addView(value);
+        updaters.add(new Runnable() {
+            @Override public void run() { value.setText(pref.get() + " " + unit); }
+        });
+        Button minus = Ui.soft(this, theme, "−  " + step + " " + unit, new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                pref.set(pref.get() - step);
+                refresh();
+            }
+        });
+        Button plus = Ui.soft(this, theme, "+  " + step + " " + unit, new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                pref.set(pref.get() + step);
+                refresh();
+            }
+        });
+        card.addView(buttonRow(minus, plus));
+        hint(card, explanation);
+    }
+
+    // ---------------------------------------------------------------- cartes
+
+    private void buildLinksCard() {
+        LinearLayout card = section("📂  Profils et historique",
+                "Un profil mémorise les positions des boutons d'une application (MyWhoosh, Rouvy, "
+                        + "Zwift…). L'historique garde la trace de tes sessions.");
+        profileText = Ui.text(this, "", 14, theme.cyan, true);
+        profileText.setPadding(0, dp(6), 0, 0);
+        card.addView(profileText);
+        card.addView(buttonRow(
+                Ui.soft(this, theme, "Gérer les profils", new View.OnClickListener() {
+                    @Override public void onClick(View v) {
+                        startActivity(new Intent(SettingsActivity.this, ProfilesActivity.class));
+                    }
+                }),
+                Ui.soft(this, theme, "Historique", new View.OnClickListener() {
+                    @Override public void onClick(View v) {
+                        startActivity(new Intent(SettingsActivity.this, HistoryActivity.class));
+                    }
+                })));
+    }
+
     private void buildTapsCard() {
         LinearLayout card = section("👆  Appuis tactiles",
-                "ClickBridge touche l'écran à ta place, aux deux endroits que tu as réglés : les "
-                        + "boutons de vitesse de MyWhoosh. Les points sont mémorisés séparément en portrait "
-                        + "et en paysage, et ne valent que pour cet appareil.");
+                "ClickBridge touche l'écran à ta place, aux deux endroits réglés dans le profil actif : "
+                        + "les boutons de vitesse de l'appli. Les points sont mémorisés séparément en "
+                        + "portrait et en paysage, et ne valent que pour cet appareil.");
         pointsPill = Ui.pill(this, "", theme.muted);
         card.addView(pointsPill, Ui.wrapTop(this, 6));
         card.addView(Ui.primary(this, "Régler les points d'appui", theme.cyan, theme.blue,
                 new View.OnClickListener() {
                     @Override public void onClick(View v) { Actions.startCalibration(SettingsActivity.this); }
                 }));
-        hint(card, "Ouvre MyWhoosh sur l'écran de course avant de régler : les pastilles + et − "
+        hint(card, "Ouvre l'appli (MyWhoosh…) sur l'écran de course avant de régler : les pastilles + et − "
                 + "restent affichées par-dessus.");
 
-        TextView holdTitle = Ui.text(this, "Durée du toucher", 15, theme.text, true);
-        holdTitle.setPadding(0, dp(16), 0, 0);
-        card.addView(holdTitle);
-        holdValue = Ui.text(this, "", 14, theme.cyan, true);
-        card.addView(holdValue);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        Button minus = Ui.soft(this, theme, "−  10 ms", new View.OnClickListener() {
-            @Override public void onClick(View v) { changeHold(-10); }
+        addStepper(card, "Durée du toucher", "ms", 10, new IntPref() {
+            @Override public int get() { return Prefs.holdMs(SettingsActivity.this); }
+            @Override public void set(int v) { Prefs.setHoldMs(SettingsActivity.this, v); }
+        }, "Temps pendant lequel le doigt « reste posé ». 50 ms est la valeur de départ ; si l'appli "
+                + "ignore certains appuis, augmente-la par pas de 10 ms.");
+    }
+
+    private void buildRepeatCard() {
+        LinearLayout card = section("🔁  Appui continu",
+                "Quand tu maintiens un bouton du Click enfoncé, ClickBridge peut répéter le toucher pour "
+                        + "changer plusieurs fois de vitesse sans relâcher. La répétition s'arrête dès que "
+                        + "tu relâches le bouton.");
+        repeatButton = Ui.soft(this, theme, "", new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Prefs.setRepeatEnabled(SettingsActivity.this, !Prefs.repeatEnabled(SettingsActivity.this));
+                refresh();
+            }
         });
-        Button plus = Ui.soft(this, theme, "+  10 ms", new View.OnClickListener() {
-            @Override public void onClick(View v) { changeHold(10); }
-        });
-        LinearLayout.LayoutParams lpA = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lpA.topMargin = dp(8);
-        lpA.rightMargin = dp(6);
-        LinearLayout.LayoutParams lpB = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lpB.topMargin = dp(8);
-        lpB.leftMargin = dp(6);
-        row.addView(minus, lpA);
-        row.addView(plus, lpB);
-        card.addView(row);
-        hint(card, "Temps pendant lequel le doigt « reste posé ». 50 ms est la valeur de départ ; "
-                + "si MyWhoosh ignore certains appuis, augmente-la par pas de 10 ms.");
+        card.addView(repeatButton);
+
+        addStepper(card, "Délai avant la première répétition", "ms", 50, new IntPref() {
+            @Override public int get() { return Prefs.repeatDelay(SettingsActivity.this); }
+            @Override public void set(int v) { Prefs.setRepeatDelay(SettingsActivity.this, v); }
+        }, "Temps d'attente, bouton maintenu, avant le premier toucher répété. Plus court = plus "
+                + "réactif, mais un appui un peu long risque de déclencher une répétition. Valeur de "
+                + "départ : 400 ms.");
+
+        addStepper(card, "Temps entre deux répétitions", "ms", 10, new IntPref() {
+            @Override public int get() { return Prefs.repeatInterval(SettingsActivity.this); }
+            @Override public void set(int v) { Prefs.setRepeatInterval(SettingsActivity.this, v); }
+        }, "Rythme des touchers répétés. ClickBridge ne descend jamais sous la durée du toucher + 20 ms, "
+                + "pour que les gestes ne se chevauchent pas. Valeur de départ : 120 ms.");
     }
 
     private void buildAccessibilityCard() {
@@ -134,7 +201,7 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
 
     private void buildBackgroundCard() {
         LinearLayout card = section("🔋  Arrière-plan",
-                "ClickBridge reste connecté au Click pendant que MyWhoosh est à l'écran, grâce à une "
+                "ClickBridge reste connecté au Click pendant que l'appli est à l'écran, grâce à une "
                         + "notification discrète. Pour qu'Android ne l'endorme pas, autorise-le à "
                         + "fonctionner sans restriction de batterie.");
         bgPill = Ui.pill(this, "", theme.muted);
@@ -228,17 +295,19 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
 
     // ---------------------------------------------------------------- mise à jour
 
-    private void changeHold(int delta) {
-        Prefs.setHoldMs(this, Prefs.holdMs(this) + delta);
-        refresh();
-    }
-
     private void refresh() {
+        for (Runnable r : updaters) r.run();
+
+        profileText.setText("Profil actif : " + Profiles.active(this).name);
+
         boolean port = Prefs.hasPoints(this, "port");
         boolean land = Prefs.hasPoints(this, "land");
         Ui.setPill(this, pointsPill, "Portrait " + (port ? "✓" : "✗") + "   ·   Paysage " + (land ? "✓" : "✗"),
                 (port || land) ? theme.ok : theme.warn);
-        holdValue.setText(Prefs.holdMs(this) + " ms");
+
+        boolean repeat = Prefs.repeatEnabled(this);
+        repeatButton.setText(repeat ? "Répétition : activée" : "Répétition : désactivée");
+        Ui.styleSoft(this, theme, repeatButton, repeat);
 
         boolean access = TapService.isActive();
         Ui.setPill(this, accessPill, access ? "✓  Service actif" : "✗  Service inactif",
@@ -270,4 +339,9 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
     @Override public void onBattery(int percent) { }
 
     @Override public void onRunning(boolean running) { }
+
+    @Override
+    public void onProfileChanged() {
+        refresh();
+    }
 }

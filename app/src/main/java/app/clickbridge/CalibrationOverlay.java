@@ -272,8 +272,9 @@ final class CalibrationOverlay {
         help.setTextColor(Color.WHITE);
         help.setTextSize(13);
         help.setMaxWidth(dp(300));
-        help.setText("Glisse + et − sur les boutons de vitesse de MyWhoosh, puis « Valider ». "
-                + "Tu peux changer d'appli normalement pendant le réglage.");
+        help.setText("Profil « " + Profiles.active(svc).name + " » : glisse + et − sur les boutons "
+                + "de vitesse de l'appli, puis « Valider ». Tu peux changer d'appli normalement "
+                + "pendant le réglage.");
         panel.addView(help);
 
         LinearLayout row1 = new LinearLayout(svc);

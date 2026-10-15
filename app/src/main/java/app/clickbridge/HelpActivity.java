@@ -34,6 +34,35 @@ public class HelpActivity extends BaseActivity {
                     + "• Le bouton ⇅ déplace le panneau de commandes s'il cache un bouton.\n"
                     + "• « Valider » enregistre. « Annuler » ferme sans rien changer.\n\n"
                     + "Tu peux aussi lancer le réglage depuis la notification (« Régler les points »)."},
+        {"Profils (MyWhoosh, Rouvy, Zwift…)",
+            "Un profil mémorise les positions des boutons + et − d'une application, en portrait et en "
+                    + "paysage. Crée un profil par appli : « Gérer les profils » (sur l'accueil), puis "
+                    + "« Nouveau profil » et « Régler les points ».\n\n"
+                    + "• Le profil actif est celui utilisé pour les touchers. Change-le depuis l'accueil "
+                    + "(« Changer de profil ») ou depuis la notification (« Profil suivant »).\n"
+                    + "• Le profil par défaut est celui qui est actif quand l'appli démarre.\n"
+                    + "• « Dupliquer » est pratique pour partir d'un profil proche."},
+        {"Appui continu (répétition)",
+            "Si tu maintiens un bouton du Click enfoncé, ClickBridge peut répéter le toucher pour "
+                    + "changer plusieurs fois de vitesse. Active la répétition dans Réglages > Appui continu.\n\n"
+                    + "• « Délai avant la première répétition » : combien de temps tenir le bouton avant "
+                    + "que ça se répète (400 ms au départ).\n"
+                    + "• « Temps entre deux répétitions » : le rythme ensuite (120 ms au départ).\n\n"
+                    + "La répétition s'arrête dès que tu relâches le bouton, et au bout de 60 s par sécurité."},
+        {"Exporter et importer des profils",
+            "Dans « Gérer les profils » : « Exporter (fichier) » enregistre tous tes profils dans un "
+                    + "fichier ; « Importer (fichier) » les relit. « Copier » et « Coller » font la même chose "
+                    + "via le presse-papiers : pratique pour passer du téléphone à la tablette.\n\n"
+                    + "L'import ajoute les profils sans rien écraser (un nom déjà pris est renommé). Les "
+                    + "positions sont relatives à l'écran : sur un autre appareil, vérifie-les avec "
+                    + "« Régler les points » puis « Tester »."},
+        {"Historique des sessions",
+            "Une session commence quand le Click est connecté et prêt, et se termine quand tu arrêtes "
+                    + "ClickBridge ou que le Click reste déconnecté plus de 5 minutes (une reconnexion rapide "
+                    + "reste dans la même session).\n\n"
+                    + "Pour chaque session : date, durée, profil, nombre d'appuis + et −, batterie du Click au "
+                    + "début et à la fin. L'historique garde les 200 dernières sessions sur cet appareil, et "
+                    + "peut s'exporter en CSV."},
         {"Pourquoi refaire le réglage ?",
             "Les points sont enregistrés par orientation (portrait ou paysage) et pour chaque appareil, "
                     + "car la position des boutons de MyWhoosh change avec la taille et la forme de l'écran.\n\n"
@@ -75,7 +104,7 @@ public class HelpActivity extends BaseActivity {
                     + "« Journal détaillé » ajoute chaque message reçu du Click : à n'activer que pour "
                     + "chercher une panne."},
         {"À propos",
-            "ClickBridge version 0.3.\n\n"
+            "ClickBridge version 0.4.\n\n"
                     + "Compatible avec le Zwift Click V1 (testé avec le firmware 1.1.0). Le Click V2 et le "
                     + "Zwift Ride ne sont pas encore pris en charge."},
     };

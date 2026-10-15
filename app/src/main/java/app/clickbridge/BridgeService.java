@@ -9,25 +9,33 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 
 /**
  * Service de premier plan : garde la connexion Bluetooth au Click quand une autre appli
- * (MyWhoosh) est à l'écran, et transforme chaque appui en toucher via TapService.
+ * (MyWhoosh) est à l'écran, transforme chaque appui en toucher via TapService (avec répétition
+ * si le bouton reste enfoncé) et tient l'historique des sessions.
  */
 public class BridgeService extends Service implements ClickClient.Listener {
 
     static final String ACTION_STOP = "app.clickbridge.STOP";
     static final String ACTION_CALIBRATE = "app.clickbridge.CALIBRATE";
     static final String ACTION_REPOST = "app.clickbridge.REPOST";
+    static final String ACTION_NEXT_PROFILE = "app.clickbridge.NEXT_PROFILE";
     private static final String CHANNEL = "clickbridge";
     private static final int NOTIF_ID = 1;
+    private static final long MAX_REPEAT_MS = 60_000L;   // garde-fou si un relâchement est perdu
 
     static volatile BridgeService current;
 
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private ClickClient client;
     private boolean plusDown, minusDown;
+    private Runnable plusRepeat, minusRepeat;
+    private long plusSince, minusSince;
     private String lastNotificationText = "";
     private long lastWarn;
 
@@ -47,7 +55,10 @@ public class BridgeService extends Service implements ClickClient.Listener {
         String action = intent == null ? null : intent.getAction();
 
         if (ACTION_STOP.equals(action)) {
+            cancelRepeat(true);
+            cancelRepeat(false);
             client.stop();
+            SessionLog.finish(this);
             Bridge.get().running(false);
             stopForeground(true);
             stopSelf();
@@ -55,7 +66,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
         }
 
         try {
-            startInForeground(Bridge.get().statusText());
+            startInForeground(composeText());
         } catch (RuntimeException e) {
             // Android refuse parfois le démarrage au premier plan (permission manquante, redémarrage
             // automatique en arrière-plan) : on l'indique au lieu de planter.
@@ -74,6 +85,9 @@ public class BridgeService extends Service implements ClickClient.Listener {
             } else {
                 Bridge.get().log("Active d'abord le service d'accessibilité de ClickBridge.");
             }
+        } else if (ACTION_NEXT_PROFILE.equals(action)) {
+            Profile p = Profiles.next(this);
+            if (p != null) Bridge.get().log("Profil actif : " + p.name);
         }
 
         client.setVerbose(Prefs.verbose(this));
@@ -87,7 +101,10 @@ public class BridgeService extends Service implements ClickClient.Listener {
     @Override
     public void onDestroy() {
         current = null;
+        cancelRepeat(true);
+        cancelRepeat(false);
         client.stop();
+        SessionLog.finish(this);
         Bridge.get().running(false);
         super.onDestroy();
     }
@@ -107,6 +124,15 @@ public class BridgeService extends Service implements ClickClient.Listener {
 
     // ---------------------------------------------------------------- notification
 
+    private String composeText() {
+        return Profiles.active(this).name + " · " + Bridge.get().statusText();
+    }
+
+    /** Appelé quand le profil actif change. */
+    void refreshNotification() {
+        updateNotification(composeText());
+    }
+
     private void startInForeground(String text) {
         Notification n = buildNotification(text);
         lastNotificationText = text;
@@ -125,13 +151,18 @@ public class BridgeService extends Service implements ClickClient.Listener {
                 new Intent(this, BridgeService.class).setAction(ACTION_CALIBRATE), immutable);
         PendingIntent stop = PendingIntent.getService(this, 2,
                 new Intent(this, BridgeService.class).setAction(ACTION_STOP), immutable);
-                // Android 14+ permet de balayer cette notification : on la réaffiche aussitôt
+        // Android 14+ permet de balayer cette notification : on la réaffiche aussitôt
         PendingIntent dismissed = PendingIntent.getService(this, 3,
                 new Intent(this, BridgeService.class).setAction(ACTION_REPOST), immutable);
+        PendingIntent nextProfile = PendingIntent.getService(this, 4,
+                new Intent(this, BridgeService.class).setAction(ACTION_NEXT_PROFILE), immutable);
 
         Notification.Action calibrateAction = new Notification.Action.Builder(
                 Icon.createWithResource(this, android.R.drawable.ic_menu_manage),
                 "Régler les points", calibrate).build();
+        Notification.Action profileAction = new Notification.Action.Builder(
+                Icon.createWithResource(this, android.R.drawable.ic_media_next),
+                "Profil suivant", nextProfile).build();
         Notification.Action stopAction = new Notification.Action.Builder(
                 Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
                 "Arrêter", stop).build();
@@ -145,6 +176,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
                 .setDeleteIntent(dismissed)
                 .setOnlyAlertOnce(true)
                 .addAction(calibrateAction)
+                .addAction(profileAction)
                 .addAction(stopAction)
                 .build();
     }
@@ -160,7 +192,12 @@ public class BridgeService extends Service implements ClickClient.Listener {
     @Override
     public void onStatus(String text, int level) {
         Bridge.get().status(text, level);
-        updateNotification(text);
+        if (level == ClickClient.GREEN) {
+            SessionLog.onReady(this, Profiles.active(this).name, Bridge.get().battery());
+        } else {
+            SessionLog.onNotReady(this);
+        }
+        updateNotification(composeText());
     }
 
     @Override
@@ -171,15 +208,58 @@ public class BridgeService extends Service implements ClickClient.Listener {
     @Override
     public void onBattery(int percent) {
         Bridge.get().battery(percent);
+        SessionLog.onBattery(this, percent);
     }
 
     @Override
     public void onButtons(boolean plus, boolean minus) {
         Bridge.get().buttons(plus, minus);
-        if (plus && !plusDown) tap(true);
-        if (minus && !minusDown) tap(false);
-        plusDown = plus;
-        minusDown = minus;
+        handleEdge(true, plus);
+        handleEdge(false, minus);
+    }
+
+    // ---------------------------------------------------------------- appui et répétition
+
+    private void handleEdge(boolean isPlus, boolean pressed) {
+        boolean was = isPlus ? plusDown : minusDown;
+        if (isPlus) plusDown = pressed; else minusDown = pressed;
+        if (pressed && !was) {
+            if (isPlus) plusSince = SystemClock.uptimeMillis(); else minusSince = SystemClock.uptimeMillis();
+            tap(isPlus);
+            scheduleRepeat(isPlus);
+        } else if (!pressed && was) {
+            cancelRepeat(isPlus);
+        }
+    }
+
+    /** Si la répétition est activée et que le bouton reste enfoncé : un toucher après le délai, puis à intervalle régulier. */
+    private void scheduleRepeat(final boolean isPlus) {
+        cancelRepeat(isPlus);
+        if (!Prefs.repeatEnabled(this)) return;
+        Runnable r = new Runnable() {
+            @Override public void run() {
+                boolean down = isPlus ? plusDown : minusDown;
+                long since = isPlus ? plusSince : minusSince;
+                if (!down || !Prefs.repeatEnabled(BridgeService.this)) return;
+                if (SystemClock.uptimeMillis() - since > MAX_REPEAT_MS) {
+                    Bridge.get().log("Répétition arrêtée après 60 s (relâchement non reçu ?).");
+                    return;
+                }
+                tap(isPlus);
+                // jamais plus rapide que la durée du toucher, sinon les gestes se chevauchent
+                long interval = Math.max(Prefs.repeatInterval(BridgeService.this),
+                        Prefs.holdMs(BridgeService.this) + 20L);
+                handler.postDelayed(this, interval);
+            }
+        };
+        if (isPlus) plusRepeat = r; else minusRepeat = r;
+        handler.postDelayed(r, Prefs.repeatDelay(this));
+    }
+
+    private void cancelRepeat(boolean isPlus) {
+        Runnable r = isPlus ? plusRepeat : minusRepeat;
+        if (r != null) handler.removeCallbacks(r);
+        if (isPlus) plusRepeat = null; else minusRepeat = null;
     }
 
     private void tap(boolean plus) {
@@ -196,8 +276,11 @@ public class BridgeService extends Service implements ClickClient.Listener {
                 lastWarn = now;
                 Bridge.get().log(problem);
             }
-        } else if (Prefs.verbose(this)) {
-            Bridge.get().log("Toucher envoyé (" + (plus ? "+" : "−") + ")");
+        } else {
+            SessionLog.onTap(this, plus);
+            if (Prefs.verbose(this)) {
+                Bridge.get().log("Toucher envoyé (" + (plus ? "+" : "−") + ")");
+            }
         }
     }
 }

@@ -66,6 +66,7 @@ public class WizardActivity extends BaseActivity implements Bridge.Ui {
                         + "par-dessus MyWhoosh.\n"
                         + "3. Glisse + et − sur les boutons de vitesse de MyWhoosh. « Tester » envoie un "
                         + "vrai toucher ; « Valider » enregistre.\n\n"
+                        + "Les points sont enregistrés dans le profil actif (un profil par application : voir « Profils »). "
                         + "À refaire en portrait et en paysage, et sur chaque appareil (téléphone, tablette).");
         c3.addView(Ui.primary(this, "Afficher les pastilles", theme.cyan, theme.blue, new View.OnClickListener() {
             @Override public void onClick(View v) { Actions.startCalibration(WizardActivity.this); }
