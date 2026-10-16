@@ -234,7 +234,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
                         + Math.max(Prefs.repeatInterval(this), Prefs.holdMs(this) + 20) + " ms)"
                         : "désactivée"));
             }
-            tap(isPlus);
+            
             scheduleRepeat(isPlus);
         } else if (!pressed && was) {
             if (Prefs.verbose(this)) {
@@ -260,6 +260,8 @@ public class BridgeService extends Service implements ClickClient.Listener {
                     Bridge.get().log("Répétition arrêtée après 60 s (relâchement non reçu ?).");
                     return;
                 }
+                int n = isPlus ? ++plusRepeats : ++minusRepeats;
+                if (Prefs.verbose(BridgeService.this)) Bridge.get().log("Répétition n°" + n);
                 tap(isPlus);
                 // jamais plus rapide que la durée du toucher, sinon les gestes se chevauchent
                 long interval = Math.max(Prefs.repeatInterval(BridgeService.this),
@@ -287,7 +289,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
         }
         if (problem != null) {
             long now = SystemClock.uptimeMillis();
-            if (now - lastWarn > 8000) {      // évite de remplir le journal à chaque appui
+            if (Prefs.verbose(this) || now - lastWarn > 8000) {   // sinon : un message toutes les 8 s
                 lastWarn = now;
                 Bridge.get().log(problem);
             }
