@@ -36,6 +36,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
     private boolean plusDown, minusDown;
     private Runnable plusRepeat, minusRepeat;
     private long plusSince, minusSince;
+    private int plusRepeats, minusRepeats;
     private String lastNotificationText = "";
     private long lastWarn;
 
@@ -223,11 +224,25 @@ public class BridgeService extends Service implements ClickClient.Listener {
     private void handleEdge(boolean isPlus, boolean pressed) {
         boolean was = isPlus ? plusDown : minusDown;
         if (isPlus) plusDown = pressed; else minusDown = pressed;
+        String name = isPlus ? "+" : "−";
         if (pressed && !was) {
-            if (isPlus) plusSince = SystemClock.uptimeMillis(); else minusSince = SystemClock.uptimeMillis();
+            long now = SystemClock.uptimeMillis();
+            if (isPlus) { plusSince = now; plusRepeats = 0; } else { minusSince = now; minusRepeats = 0; }
+            if (Prefs.verbose(this)) {
+                Bridge.get().log("Appui " + name + " : répétition " + (Prefs.repeatEnabled(this)
+                        ? "activée (délai " + Prefs.repeatDelay(this) + " ms, intervalle "
+                        + Math.max(Prefs.repeatInterval(this), Prefs.holdMs(this) + 20) + " ms)"
+                        : "désactivée"));
+            }
             tap(isPlus);
             scheduleRepeat(isPlus);
         } else if (!pressed && was) {
+            if (Prefs.verbose(this)) {
+                long since = isPlus ? plusSince : minusSince;
+                int n = isPlus ? plusRepeats : minusRepeats;
+                Bridge.get().log("Relâché " + name + " après " + (SystemClock.uptimeMillis() - since)
+                        + " ms, " + n + " répétition(s)");
+            }
             cancelRepeat(isPlus);
         }
     }
