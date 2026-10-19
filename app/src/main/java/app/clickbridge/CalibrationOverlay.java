@@ -19,10 +19,16 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
- * Réglage des points d'appui : deux pastilles (+ et −) et un petit panneau, affichés par-dessus
- * MyWhoosh. Chaque élément est une PETITE fenêtre indépendante : le reste de l'écran (barre de
- * navigation, autres applis, MyWhoosh) reste utilisable pendant le réglage.
+ * Réglage des points d'appui : une pastille par bouton du profil actif (+ et − du Click, leviers
+ * et boutons du Ride…) et un petit panneau, affichés par-dessus l'appli. Chaque élément est une
+ * PETITE fenêtre indépendante : le reste de l'écran (barre de navigation, autres applis) reste
+ * utilisable pendant le réglage. Toucher une pastille sans la déplacer envoie un toucher de test.
  */
 final class CalibrationOverlay {
 
@@ -34,8 +40,9 @@ final class CalibrationOverlay {
     private final WindowManager wm;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
-    private TextView plusMarker, minusMarker;
-    private WindowManager.LayoutParams plusLp, minusLp, panelLp;
+    private final Map<String, TextView> markers = new LinkedHashMap<>();
+    private final Map<String, WindowManager.LayoutParams> markerParams = new LinkedHashMap<>();
+    private WindowManager.LayoutParams panelLp;
     private LinearLayout panel;
     private boolean panelTop = true;
     private boolean shown;
@@ -59,30 +66,45 @@ final class CalibrationOverlay {
 
     void show() {
         if (shown) return;
-        size = dp(56);
+        List<String> ids = Profiles.buttons(svc);
+        if (ids.isEmpty()) {
+            Toast.makeText(svc, "Ce profil n'a aucun bouton activé : ajoute-en dans « Gérer les profils ».",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        size = dp(52);
         int[] screen = svc.screenSize();
         String orient = svc.orientationKey();
-        Bridge.get().log("Calque de réglage affiché : " + orient + " " + screen[0] + "x" + screen[1]);
+        Bridge.get().log("Calque de réglage affiché : " + orient + " " + screen[0] + "x" + screen[1]
+                + ", " + ids.size() + " bouton(s)");
 
-        // positions de départ : points déjà réglés, sinon côté droit de l'écran
-        float[] p = Prefs.point(svc, true, orient);
-        float[] m = Prefs.point(svc, false, orient);
-        float px = p != null ? p[0] * screen[0] : screen[0] * 0.82f;
-        float py = p != null ? p[1] * screen[1] : screen[1] * 0.38f;
-        float mx = m != null ? m[0] * screen[0] : screen[0] * 0.82f;
-        float my = m != null ? m[1] * screen[1] : screen[1] * 0.62f;
-
-        plusMarker = makeMarker("+", Color.parseColor("#22C55E"));
-        minusMarker = makeMarker("−", Color.parseColor("#6D5BFF"));
-        plusLp = markerParams(px, py);
-        minusLp = markerParams(mx, my);
-        attachDrag(plusMarker, plusLp);
-        attachDrag(minusMarker, minusLp);
+        final Map<String, float[]> wanted = new LinkedHashMap<>();
+        for (int i = 0; i < ids.size(); i++) {
+            String id = ids.get(i);
+            float[] saved = Profiles.point(svc, id, orient);
+            float x, y;
+            if (saved != null) {
+                x = saved[0] * screen[0];
+                y = saved[1] * screen[1];
+            } else if (ids.size() <= 2) {
+                x = screen[0] * 0.82f;
+                y = screen[1] * (0.38f + 0.24f * i);
+            } else {                                   // plusieurs boutons : une grille côté droit
+                int col = i / 6, row = i % 6;
+                x = screen[0] * (0.90f - 0.11f * col);
+                y = screen[1] * (0.17f + 0.12f * row);
+            }
+            wanted.put(id, new float[]{x, y});
+            TextView m = makeMarker(id);
+            WindowManager.LayoutParams lp = markerParams(x, y);
+            markers.put(id, m);
+            markerParams.put(id, lp);
+            attachDrag(id, m, lp);
+        }
         buildPanel();
 
         try {
-            wm.addView(plusMarker, plusLp);
-            wm.addView(minusMarker, minusLp);
+            for (String id : ids) wm.addView(markers.get(id), markerParams.get(id));
             wm.addView(panel, panelLp);
         } catch (Exception e) {
             Bridge.get().log("Impossible d'afficher le calque : " + e);
@@ -90,8 +112,10 @@ final class CalibrationOverlay {
             return;
         }
         shown = true;
-        correct(plusMarker, plusLp, px, py);
-        correct(minusMarker, minusLp, mx, my);
+        for (String id : ids) {
+            float[] w = wanted.get(id);
+            correct(markers.get(id), markerParams.get(id), w[0], w[1]);
+        }
     }
 
     /** Fermeture définitive (Valider, Annuler, service arrêté). */
@@ -121,17 +145,17 @@ final class CalibrationOverlay {
 
     private void removeViews() {
         shown = false;
-        View[] views = {plusMarker, minusMarker, panel};
+        List<View> views = new ArrayList<View>(markers.values());
+        if (panel != null) views.add(panel);
         for (View v : views) {
-            if (v == null) continue;
             try {
                 wm.removeView(v);
             } catch (Exception ignored) {
                 // déjà retiré
             }
         }
-        plusMarker = null;
-        minusMarker = null;
+        markers.clear();
+        markerParams.clear();
         panel = null;
     }
 
@@ -165,26 +189,29 @@ final class CalibrationOverlay {
         return lp;
     }
 
-    private TextView makeMarker(String symbol, int color) {
+    private TextView makeMarker(String id) {
         TextView v = new TextView(svc);
-        v.setText(symbol);
-        v.setTextSize(26);
+        String glyph = Buttons.glyph(id);
+        v.setText(glyph);
+        v.setTextSize(glyph.length() > 1 ? 17 : 24);
         v.setTypeface(Typeface.DEFAULT_BOLD);
         v.setTextColor(Color.WHITE);
         v.setGravity(Gravity.CENTER);
         GradientDrawable d = new GradientDrawable();
         d.setShape(GradientDrawable.OVAL);
-        d.setColor(color);
+        d.setColor(Buttons.color(id));
         d.setStroke(dp(3), Color.WHITE);
         v.setBackground(d);
         v.setAlpha(0.92f);
         return v;
     }
 
-    private void attachDrag(View v, final WindowManager.LayoutParams lp) {
+    /** Glisser déplace la pastille ; un simple toucher envoie un toucher de test. */
+    private void attachDrag(final String id, View v, final WindowManager.LayoutParams lp) {
         v.setOnTouchListener(new View.OnTouchListener() {
             private int startX, startY;
             private float downX, downY;
+            private boolean moved;
 
             @Override public boolean onTouch(View view, MotionEvent e) {
                 switch (e.getActionMasked()) {
@@ -193,12 +220,21 @@ final class CalibrationOverlay {
                         startY = lp.y;
                         downX = e.getRawX();
                         downY = e.getRawY();
+                        moved = false;
                         break;
                     case MotionEvent.ACTION_MOVE:
-                        int[] s = svc.screenSize();
-                        lp.x = clamp(startX + Math.round(e.getRawX() - downX), 0, s[0] - size);
-                        lp.y = clamp(startY + Math.round(e.getRawY() - downY), 0, s[1] - size);
-                        updateLayout(view, lp);
+                        if (Math.abs(e.getRawX() - downX) > dp(8) || Math.abs(e.getRawY() - downY) > dp(8)) {
+                            moved = true;
+                        }
+                        if (moved) {
+                            int[] s = svc.screenSize();
+                            lp.x = clamp(startX + Math.round(e.getRawX() - downX), 0, s[0] - size);
+                            lp.y = clamp(startY + Math.round(e.getRawY() - downY), 0, s[1] - size);
+                            updateLayout(view, lp);
+                        }
+                        break;
+                    case MotionEvent.ACTION_UP:
+                        if (!moved) test(id);
                         break;
                     default:
                         break;
@@ -272,18 +308,15 @@ final class CalibrationOverlay {
         help.setTextColor(Color.WHITE);
         help.setTextSize(13);
         help.setMaxWidth(dp(300));
-        help.setText("Profil « " + Profiles.active(svc).name + " » : glisse + et − sur les boutons "
-                + "de vitesse de l'appli, puis « Valider ». Tu peux changer d'appli normalement "
-                + "pendant le réglage.");
+        help.setText("Profil « " + Profiles.active(svc).name + " » : glisse chaque pastille sur le bouton "
+                + "correspondant de l'appli, puis « Valider ». Touche une pastille pour la tester. "
+                + "Tu peux changer d'appli normalement pendant le réglage.");
         panel.addView(help);
 
         LinearLayout row1 = new LinearLayout(svc);
         row1.setOrientation(LinearLayout.HORIZONTAL);
-        row1.addView(makeButton("Tester +", new View.OnClickListener() {
-            @Override public void onClick(View v) { test(plusMarker, plusLp); }
-        }));
-        row1.addView(makeButton("Tester −", new View.OnClickListener() {
-            @Override public void onClick(View v) { test(minusMarker, minusLp); }
+        row1.addView(makeButton("Tout tester", new View.OnClickListener() {
+            @Override public void onClick(View v) { testAll(); }
         }));
         row1.addView(makeButton("⇅", new View.OnClickListener() {
             @Override public void onClick(View v) { movePanel(); }
@@ -321,8 +354,10 @@ final class CalibrationOverlay {
     // ---------------------------------------------------------------- actions
 
     /** Envoie un vrai toucher à l'endroit de la pastille, qui s'efface le temps du test. */
-    private void test(final TextView marker, final WindowManager.LayoutParams lp) {
-        if (!shown || marker == null) return;
+    private void test(String id) {
+        final TextView marker = markers.get(id);
+        final WindowManager.LayoutParams lp = markerParams.get(id);
+        if (!shown || marker == null || lp == null) return;
         final float[] c = centerOnScreen(marker);
         marker.setVisibility(View.INVISIBLE);
         lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
@@ -342,14 +377,24 @@ final class CalibrationOverlay {
         }, 900);
     }
 
+    /** Teste toutes les pastilles l'une après l'autre. */
+    private void testAll() {
+        int i = 0;
+        for (final String id : new ArrayList<>(markers.keySet())) {
+            handler.postDelayed(new Runnable() {
+                @Override public void run() { test(id); }
+            }, 1000L * i++);
+        }
+    }
+
     private void save() {
-        if (!shown || plusMarker == null || minusMarker == null) return;
+        if (!shown) return;
         int[] screen = svc.screenSize();
         String orient = svc.orientationKey();
-        float[] p = centerOnScreen(plusMarker);
-        float[] m = centerOnScreen(minusMarker);
-        Prefs.setPoint(svc, true, orient, p[0] / screen[0], p[1] / screen[1]);
-        Prefs.setPoint(svc, false, orient, m[0] / screen[0], m[1] / screen[1]);
+        for (Map.Entry<String, TextView> e : markers.entrySet()) {
+            float[] c = centerOnScreen(e.getValue());
+            Profiles.setPoint(svc, e.getKey(), orient, c[0] / screen[0], c[1] / screen[1]);
+        }
         String name = "land".equals(orient) ? "paysage" : "portrait";
         Bridge.get().log("Points d'appui enregistrés (" + name + ").");
         Toast.makeText(svc, "Points enregistrés (" + name + ")", Toast.LENGTH_SHORT).show();

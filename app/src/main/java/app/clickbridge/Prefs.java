@@ -72,26 +72,28 @@ final class Prefs {
         sp(c).edit().putInt("theme", mode).apply();
     }
 
-    static String clickAddress(Context c) {
-        return sp(c).getString("click_address", null);
+    /** Appareil utilisé : "click" (Zwift Click) ou "ride" (Zwift Ride, deux manettes). */
+    static String deviceMode(Context c) {
+        return sp(c).getString("device_mode", Buttons.MODE_CLICK);
     }
 
-    static void setClickAddress(Context c, String address) {
+    static void setDeviceMode(Context c, String mode) {
+        sp(c).edit().putString("device_mode", Buttons.MODE_RIDE.equals(mode) ? Buttons.MODE_RIDE : Buttons.MODE_CLICK).apply();
+    }
+
+    /** Adresse mémorisée d'une manette : rôles "click", "ride_left", "ride_right". */
+    static String deviceAddress(Context c, String role) {
+        return sp(c).getString("click".equals(role) ? "click_address" : "addr_" + role, null);
+    }
+
+    static void setDeviceAddress(Context c, String role, String address) {
+        String key = "click".equals(role) ? "click_address" : "addr_" + role;
         SharedPreferences.Editor e = sp(c).edit();
-        if (address == null) e.remove("click_address"); else e.putString("click_address", address);
+        if (address == null) e.remove(key); else e.putString(key, address);
         e.apply();
     }
 
     // ---------------------------------------------------------------- points : profil actif
-
-    /** @param orient "port" ou "land" ; renvoie {x, y} en fractions de l'écran, ou null. */
-    static float[] point(Context c, boolean plus, String orient) {
-        return Profiles.point(c, plus, orient);
-    }
-
-    static void setPoint(Context c, boolean plus, String orient, float x, float y) {
-        Profiles.setPoint(c, plus, orient, x, y);
-    }
 
     static boolean hasPoints(Context c, String orient) {
         return Profiles.hasPoints(c, orient);

@@ -34,8 +34,20 @@ public class HelpActivity extends BaseActivity {
                     + "• Le bouton ⇅ déplace le panneau de commandes s'il cache un bouton.\n"
                     + "• « Valider » enregistre. « Annuler » ferme sans rien changer.\n\n"
                     + "Tu peux aussi lancer le réglage depuis la notification (« Régler les points »)."},
+        {"Zwift Ride",
+            "Le Zwift Ride a deux unités Bluetooth séparées : ClickBridge se connecte aux deux.\n\n"
+                    + "1. Réglages > Appareil > « Zwift Ride ».\n"
+                    + "2. Démarre, puis réveille chaque unité (appui sur un bouton, LED bleue qui pulse). "
+                    + "L'accueil indique l'état de la gauche et de la droite.\n\n"
+                    + "Boutons reconnus : à gauche, la croix (haut, bas, gauche, droite) et les leviers haut et "
+                    + "bas ; à droite, les boutons A, B, Y, Z et les leviers haut et bas. Les leviers orange "
+                    + "(analogiques) et les boutons marche/arrêt ne sont pas pris en charge.\n\n"
+                    + "Chaque profil choisit les boutons qu'il pilote (« Gérer les profils » > « Boutons du "
+                    + "profil »). Par défaut, un profil Ride active les quatre leviers. Les leviers « haut » "
+                    + "comptent comme « + » et les leviers « bas » comme « − » pour les indicateurs, la "
+                    + "répétition et l'historique."},
         {"Profils (MyWhoosh, Rouvy, Zwift…)",
-            "Un profil mémorise les positions des boutons + et − d'une application, en portrait et en "
+            "Un profil mémorise les positions des boutons d'une application, en portrait et en "
                     + "paysage. Crée un profil par appli : « Gérer les profils » (sur l'accueil), puis "
                     + "« Nouveau profil » et « Régler les points ».\n\n"
                     + "• Le profil actif est celui utilisé pour les touchers. Change-le depuis l'accueil "
@@ -104,9 +116,9 @@ public class HelpActivity extends BaseActivity {
                     + "« Journal détaillé » ajoute chaque message reçu du Click : à n'activer que pour "
                     + "chercher une panne."},
         {"À propos",
-            "ClickBridge version 0.4.\n\n"
-                    + "Compatible avec le Zwift Click V1 (testé avec le firmware 1.1.0). Le Click V2 et le "
-                    + "Zwift Ride ne sont pas encore pris en charge."},
+            "ClickBridge version 0.5.\n\n"
+                    + "Compatible avec le Zwift Click V1 et le Zwift Ride (testés avec le firmware 1.1.0). "
+                    + "Le Click V2 n'est pas encore pris en charge."},
     };
 
     @Override

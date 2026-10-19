@@ -1,6 +1,7 @@
 package app.clickbridge;
 
 import org.json.JSONObject;
+import java.util.Arrays;
 
 /** Vérifie les profils (création, export/import) et l'historique des sessions, sans Android. */
 public class BooksTest {
@@ -14,8 +15,8 @@ public class BooksTest {
         // ---------------- profils
         ProfileBook b = ProfileBook.single("MyWhoosh");
         Profile my = b.list.get(0);
-        my.setPoint(true, "port", 0.8f, 0.3f);
-        my.setPoint(false, "port", 0.8f, 0.6f);
+        my.setPoint(Buttons.PLUS, "port", 0.8f, 0.3f);
+        my.setPoint(Buttons.MINUS, "port", 0.8f, 0.6f);
         check(my.hasPoints("port") && !my.hasPoints("land"), "points par orientation");
         Profile rouvy = b.create("Rouvy");
         Profile dup = b.create("rouvy");
@@ -37,7 +38,7 @@ public class BooksTest {
         ProfileBook back = ProfileBook.fromStorage(b.toStorage());
         check(back.list.size() == b.list.size() && back.defaultId.equals(b.defaultId), "stockage : aller-retour");
         Profile bm = back.list.get(0);
-        check(bm.point(true, "port") != null && Math.abs(bm.point(true, "port")[0] - 0.8f) < 1e-6, "stockage : points conservés");
+        check(bm.point(Buttons.PLUS, "port") != null && Math.abs(bm.point(Buttons.PLUS, "port")[0] - 0.8f) < 1e-6, "stockage : points conservés");
 
         // export / import
         String json = b.exportJson();
@@ -54,7 +55,7 @@ public class BooksTest {
 
         // import invalide ou malveillant
         String[] bad = {"", "pas du json", "{}", "{\"app\":\"Autre\",\"format\":1,\"profiles\":[]}",
-                "{\"app\":\"ClickBridge\",\"format\":2,\"profiles\":[{\"name\":\"x\"}]}",
+                "{\"app\":\"ClickBridge\",\"format\":3,\"profiles\":[{\"name\":\"x\"}]}",
                 "{\"app\":\"ClickBridge\",\"format\":1,\"profiles\":[{\"nom\":\"x\"}]}"};
         for (String s : bad) {
             try { new ProfileBook().importJson(s); check(false, "import refusé : " + s); }
@@ -64,12 +65,45 @@ public class BooksTest {
         p2.importJson("{\"app\":\"ClickBridge\",\"format\":1,\"profiles\":[{\"name\":\"Hors écran\","
                 + "\"points\":{\"port\":{\"plus\":[5,0.5],\"minus\":[0.2,\"x\"]},\"land\":{\"plus\":[0.1,0.2],\"minus\":[0.3,0.4]}}}]}");
         Profile he = p2.list.get(0);
-        check(!he.hasPoints("port") && he.point(true, "port") == null && he.hasPoints("land"),
+        check(!he.hasPoints("port") && he.point(Buttons.PLUS, "port") == null && he.hasPoints("land"),
                 "import : points hors écran ou invalides ignorés");
         ProfileBook p3 = new ProfileBook();
         String longName = "N".repeat(200);
         p3.importJson("{\"app\":\"ClickBridge\",\"format\":1,\"profiles\":[{\"name\":\"" + longName + "\"}]}");
         check(p3.list.get(0).name.length() <= 40, "import : nom limité à 40 caractères");
+
+
+        // ---------------- boutons du Ride et formats
+        ProfileBook rb = ProfileBook.single("Rouvy", Buttons.RIDE_DEFAULT);
+        Profile rp = rb.list.get(0);
+        check(rp.buttons.equals(Arrays.asList(Buttons.SHIFT_UP_R, Buttons.SHIFT_DN_R, Buttons.SHIFT_UP_L, Buttons.SHIFT_DN_L)),
+                "profil Ride : 4 leviers par défaut");
+        check(!rp.hasPoints("port"), "profil Ride sans point : non réglé");
+        for (String id : Buttons.RIDE_DEFAULT) rp.setPoint(id, "land", 0.5f, 0.5f);
+        check(rp.hasPoints("land") && rp.pointCount("land") == 4, "profil Ride : 4 points réglés en paysage");
+        rp.setButtons(Arrays.asList(Buttons.A, Buttons.SHIFT_UP_R, "INCONNU", Buttons.SHIFT_UP_R));
+        check(rp.buttons.equals(Arrays.asList(Buttons.SHIFT_UP_R, Buttons.A)), "setButtons : ordre d'affichage, inconnus et doublons ignorés");
+        check(!rp.hasPoints("land"), "bouton ajouté sans point : orientation non réglée");
+        ProfileBook rb2 = ProfileBook.fromStorage(rb.toStorage());
+        check(rb2.list.get(0).buttons.equals(rp.buttons) && rb2.list.get(0).point(Buttons.SHIFT_DN_L, "land") != null, "stockage : boutons et points du Ride conservés");
+
+        // ancien format (0.4) : « plus » / « minus », sans liste de boutons
+        ProfileBook old = new ProfileBook();
+        old.importJson("{\"app\":\"ClickBridge\",\"format\":1,\"profiles\":[{\"name\":\"Ancien\","
+                + "\"points\":{\"port\":{\"plus\":[0.8,0.3],\"minus\":[0.8,0.6]}}}]}");
+        Profile op = old.list.get(0);
+        check(op.buttons.equals(Arrays.asList(Buttons.PLUS, Buttons.MINUS)) && op.hasPoints("port"), "ancien format 1 relu (PLUS/MINUS)");
+        ProfileBook st = ProfileBook.fromStorage("{\"default\":\"x\",\"profiles\":[{\"id\":\"x\",\"name\":\"v0.4\","
+                + "\"points\":{\"land\":{\"plus\":[0.1,0.2],\"minus\":[0.3,0.4]}}}]}");
+        check(st.list.get(0).hasPoints("land") && st.defaultId.equals("x"), "stockage 0.4 relu sans perte");
+        String ex = rb.exportJson();
+        check(ex.contains("\"format\": 2") && ex.contains("SHIFT_UP_R"), "export au format 2 avec les identifiants de boutons");
+        ProfileBook imp = new ProfileBook();
+        imp.importJson("{\"app\":\"ClickBridge\",\"format\":2,\"profiles\":[{\"name\":\"X\",\"buttons\":[\"A\",\"ZZZ\",\"UP\"],"
+                + "\"points\":{\"port\":{\"A\":[0.1,0.2],\"ZZZ\":[0.3,0.3],\"UP\":[2,2]}}}]}");
+        Profile ip = imp.list.get(0);
+        check(ip.buttons.equals(Arrays.asList(Buttons.UP, Buttons.A)) && ip.point(Buttons.A, "port") != null && ip.point(Buttons.UP, "port") == null,
+                "import : bouton inconnu et point hors écran ignorés");
 
         // ---------------- sessions
         long t = 1_000_000_000L; long MIN = 60_000L;

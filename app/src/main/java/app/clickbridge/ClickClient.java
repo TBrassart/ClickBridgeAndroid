@@ -23,7 +23,10 @@ import android.os.Looper;
 import java.security.GeneralSecurityException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -36,11 +39,17 @@ public final class ClickClient {
     public interface Listener {
         void onStatus(String text, int level);
         void onLog(String text);
-        void onButtons(boolean plus, boolean minus);
+        /** Un bouton vient d'être enfoncé (pressed = true) ou relâché. */
+        void onButton(String id, boolean pressed);
         void onBattery(int percent);
     }
 
     public static final int GRAY = 0, ORANGE = 1, GREEN = 2, RED = 3;
+
+    /** Manettes gérées : le Click (une seule) ou les deux unités du Ride. */
+    public static final String ROLE_CLICK = "click";
+    public static final String ROLE_RIDE_LEFT = "ride_left";
+    public static final String ROLE_RIDE_RIGHT = "ride_right";
 
     private static final String BASE = "-19ca-4651-86e5-fa29dcdd09d1";
     private static final UUID SERVICE = UUID.fromString("00000001" + BASE);
@@ -50,7 +59,7 @@ public final class ClickClient {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private static final int ZWIFT_COMPANY_ID = 0x094A;
     private static final int TYPE_CLICK = 0x37, TYPE_BATTERY = 0x19;
-    private static final String WAIT_TEXT = "En attente du Click… appuie sur un bouton (LED bleue)";
+    private static final int TYPE_CLICK_DEVICE = 0x09, TYPE_RIDE_LEFT = 0x08, TYPE_RIDE_RIGHT = 0x07;
 
     private final Context context;
     private final Listener ui;
@@ -63,12 +72,29 @@ public final class ClickClient {
     private volatile boolean running;
     private boolean scanning;
     private boolean ready;
-    private boolean plusDown, minusDown;
+    private final String role;
+    private final Set<String> down = new HashSet<>();
     private volatile boolean verbose;
 
-    public ClickClient(Context context, Listener ui) {
+    public ClickClient(Context context, String role, Listener ui) {
         this.context = context.getApplicationContext();
+        this.role = role;
         this.ui = ui;
+    }
+
+    public String role() {
+        return role;
+    }
+
+    /** « Click », « Ride (gauche) », « Ride (droite) » : pour les messages. */
+    private String deviceName() {
+        if (ROLE_RIDE_LEFT.equals(role)) return "Ride (gauche)";
+        if (ROLE_RIDE_RIGHT.equals(role)) return "Ride (droite)";
+        return "Click";
+    }
+
+    private String waitText() {
+        return "En attente du " + deviceName() + "… appuie sur un bouton (LED bleue)";
     }
 
     public void setVerbose(boolean v) {
@@ -90,13 +116,13 @@ public final class ClickClient {
         stopScan();
         closeGatt();
         status("Arrêté", GRAY);
-        postButtons(false, false);
+        releaseAll();
     }
 
-    /** Oublie le Click mémorisé : le prochain démarrage refera un scan. */
+    /** Oublie la manette mémorisée : le prochain démarrage refera un scan. */
     public void forget() {
-        Prefs.setClickAddress(context, null);
-        log("Click oublié : la prochaine connexion refera une recherche.");
+        Prefs.setDeviceAddress(context, role, null);
+        log(deviceName() + " oublié : la prochaine connexion refera une recherche.");
         if (running) {
             main.removeCallbacks(reconnectRunnable);
             stopScan();
@@ -133,17 +159,17 @@ public final class ClickClient {
             scheduleReconnect(3000);
             return;
         }
-        String address = Prefs.clickAddress(context);
+        String address = Prefs.deviceAddress(context, role);
         if (address == null) {
             startScan(adapter);
             return;
         }
         try {
             BluetoothDevice device = adapter.getRemoteDevice(address);
-            status(WAIT_TEXT, ORANGE);
+            status(waitText(), ORANGE);
             connect(device, true);
         } catch (IllegalArgumentException e) {
-            Prefs.setClickAddress(context, null);
+            Prefs.setDeviceAddress(context, role, null);
             startScan(adapter);
         }
     }
@@ -162,7 +188,7 @@ public final class ClickClient {
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
             scanner.startScan(new ArrayList<ScanFilter>(), settings, scanCallback);
             scanning = true;
-            status("Recherche du Click… appuie sur un bouton (LED bleue)", ORANGE);
+            status("Recherche du " + deviceName() + "… appuie sur un bouton (LED bleue)", ORANGE);
         } catch (SecurityException e) {
             status("Permission Bluetooth manquante.", RED);
         }
@@ -179,19 +205,24 @@ public final class ClickClient {
         scanning = false;
     }
 
+    /** Le type de manette est dans les données constructeur : 9 = Click, 8 = Ride gauche, 7 = Ride droite. */
+    private boolean matches(ScanRecord rec) {
+        byte[] manuf = rec.getManufacturerSpecificData(ZWIFT_COMPANY_ID);
+        int type = (manuf != null && manuf.length > 0) ? (manuf[0] & 0xFF) : -1;
+        if (ROLE_RIDE_LEFT.equals(role)) return type == TYPE_RIDE_LEFT;
+        if (ROLE_RIDE_RIGHT.equals(role)) return type == TYPE_RIDE_RIGHT;
+        String name = rec.getDeviceName();
+        return type == TYPE_CLICK_DEVICE || (name != null && name.startsWith("Zwift Click"));
+    }
+
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override public void onScanResult(int callbackType, ScanResult result) {
             ScanRecord rec = result.getScanRecord();
             if (rec == null) return;
-            boolean match = false;
-            String name = rec.getDeviceName();
-            if (name != null && name.startsWith("Zwift Click")) match = true;
-            byte[] manuf = rec.getManufacturerSpecificData(ZWIFT_COMPANY_ID);
-            if (manuf != null && manuf.length > 0 && manuf[0] == 0x09) match = true;
-            if (!match) return;
+            if (!matches(rec)) return;
             stopScan();
-            log("Click trouvé : " + result.getDevice().getAddress());
-            status("Click trouvé, connexion…", ORANGE);
+            log(deviceName() + " trouvé : " + result.getDevice().getAddress());
+            status(deviceName() + " trouvé, connexion…", ORANGE);
             connect(result.getDevice(), false);
         }
 
@@ -208,8 +239,7 @@ public final class ClickClient {
     private void connect(BluetoothDevice device, boolean autoConnect) {
         closeGatt();
         ready = false;
-        plusDown = false;
-        minusDown = false;
+        down.clear();
         try {
             gatt = device.connectGatt(context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE);
         } catch (SecurityException e) {
@@ -234,7 +264,7 @@ public final class ClickClient {
         @Override public void run() {
             if (!running || ready) return;
             log("Pas de réponse déchiffrable après le handshake : nouvelle tentative.");
-            status("Échange des clés impossible : le Click est peut-être déjà connecté "
+            status("Échange des clés impossible : le " + deviceName() + " est peut-être déjà connecté "
                     + "à une autre appli, ou son firmware est différent.", RED);
             closeGatt();
             scheduleReconnect(3000);
@@ -258,9 +288,9 @@ public final class ClickClient {
                     // déjà fermé
                 }
                 if (gatt == g) gatt = null;
-                postButtons(false, false);
+                releaseAll();
                 if (running) {
-                    status("Click déconnecté : réveille-le (appui sur un bouton)", ORANGE);
+                    status(deviceName() + " déconnecté : réveille-le (appui sur un bouton)", ORANGE);
                     scheduleReconnect(1500);
                 }
             }
@@ -278,7 +308,7 @@ public final class ClickClient {
                 for (BluetoothGattService other : g.getServices()) {
                     log("  service " + other.getUuid());
                 }
-                status("Service Zwift introuvable : ce n'est peut-être pas un Click V1.", RED);
+                status("Service Zwift introuvable : ce n'est peut-être pas un Zwift Click ou Ride.", RED);
                 return;
             }
             if (verbose) {
@@ -411,9 +441,9 @@ public final class ClickClient {
                 BluetoothGatt g = gatt;
                 if (g != null) {
                     String address = g.getDevice().getAddress();
-                    if (!address.equals(Prefs.clickAddress(context))) {
-                        Prefs.setClickAddress(context, address);
-                        log("Click mémorisé : " + address);
+                    if (!address.equals(Prefs.deviceAddress(context, role))) {
+                        Prefs.setDeviceAddress(context, role, address);
+                        log(deviceName() + " mémorisé : " + address);
                     }
                 }
                 status("Connecté : prêt", GREEN);
@@ -431,23 +461,49 @@ public final class ClickClient {
         if (verbose) log(String.format("type=0x%02x champs=%s brut=%s", type, f, hex(pt)));
         if (type == TYPE_BATTERY && f.containsKey(2)) {
             ui.onBattery(f.get(2).intValue());
-        } else if (type == TYPE_CLICK) {
-            boolean plus = Long.valueOf(0L).equals(f.get(1));      // 0 = bouton enfoncé
-            boolean minus = Long.valueOf(0L).equals(f.get(2));
-            if (plus != plusDown || minus != minusDown) {
-                plusDown = plus;
-                minusDown = minus;
-                ui.onButtons(plus, minus);
+        } else if (type == TYPE_CLICK && ROLE_CLICK.equals(role)) {
+            Set<String> now = new LinkedHashSet<>();
+            if (Long.valueOf(0L).equals(f.get(1))) now.add(Buttons.PLUS);       // 0 = bouton enfoncé
+            if (Long.valueOf(0L).equals(f.get(2))) now.add(Buttons.MINUS);
+            applyPressed(now);
+        } else if (type == RideProtocol.TYPE_BUTTONS && !ROLE_CLICK.equals(role)) {
+            Long mask = f.get(1);
+            if (mask != null) applyPressed(RideProtocol.pressed(mask));
+        }
+    }
+
+    /** Compare avec l'état précédent et signale chaque bouton qui change (relâchements d'abord). */
+    private void applyPressed(Set<String> now) {
+        for (String id : new ArrayList<>(down)) {
+            if (!now.contains(id)) {
+                down.remove(id);
+                ui.onButton(id, false);
             }
         }
+        for (String id : now) {
+            if (down.add(id)) ui.onButton(id, true);
+        }
+    }
+
+    /** Plus de connexion : tous les boutons sont considérés comme relâchés. */
+    private void releaseAll() {
+        final ArrayList<String> ids = new ArrayList<>(down);
+        down.clear();
+        if (ids.isEmpty()) return;
+        main.post(new Runnable() {
+            @Override public void run() {
+                for (String id : ids) ui.onButton(id, false);
+            }
+        });
     }
 
     // ---------------------------------------------------------------- utilitaires
 
     private void log(final String text) {
+        final String line = ROLE_CLICK.equals(role) ? text : "[" + deviceName() + "] " + text;
         main.post(new Runnable() {
             @Override public void run() {
-                ui.onLog(text);
+                ui.onLog(line);
             }
         });
     }
@@ -456,14 +512,6 @@ public final class ClickClient {
         main.post(new Runnable() {
             @Override public void run() {
                 ui.onStatus(text, level);
-            }
-        });
-    }
-
-    private void postButtons(final boolean plus, final boolean minus) {
-        main.post(new Runnable() {
-            @Override public void run() {
-                ui.onButtons(plus, minus);
             }
         });
     }

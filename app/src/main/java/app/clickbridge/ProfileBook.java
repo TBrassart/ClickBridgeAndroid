@@ -18,8 +18,12 @@ final class ProfileBook {
     String activeId;
 
     static ProfileBook single(String name) {
+        return single(name, Buttons.CLICK_DEFAULT);
+    }
+
+    static ProfileBook single(String name, String[] buttons) {
         ProfileBook b = new ProfileBook();
-        Profile p = new Profile(UUID.randomUUID().toString(), name);
+        Profile p = new Profile(UUID.randomUUID().toString(), name, buttons);
         b.list.add(p);
         b.defaultId = p.id;
         b.activeId = p.id;
@@ -64,8 +68,12 @@ final class ProfileBook {
     }
 
     Profile create(String name) {
+        return create(name, Buttons.CLICK_DEFAULT);
+    }
+
+    Profile create(String name, String[] buttons) {
         if (list.size() >= MAX_PROFILES) return null;
-        Profile p = new Profile(UUID.randomUUID().toString(), uniqueName(name, null));
+        Profile p = new Profile(UUID.randomUUID().toString(), uniqueName(name, null), buttons);
         list.add(p);
         if (defaultId == null) defaultId = p.id;
         if (activeId == null) activeId = p.id;
@@ -147,7 +155,7 @@ final class ProfileBook {
     String exportJson() throws JSONException {
         JSONObject o = new JSONObject();
         o.put("app", "ClickBridge");
-        o.put("format", 1);
+        o.put("format", 2);
         JSONArray arr = new JSONArray();
         for (Profile p : list) arr.put(p.toJson());
         o.put("profiles", arr);
@@ -167,7 +175,8 @@ final class ProfileBook {
             throw new IllegalArgumentException("Texte illisible : ce n'est pas un export ClickBridge.");
         }
         JSONArray arr = o.optJSONArray("profiles");
-        if (!"ClickBridge".equals(o.optString("app")) || o.optInt("format", 0) != 1 || arr == null) {
+        int format = o.optInt("format", 0);
+        if (!"ClickBridge".equals(o.optString("app")) || (format != 1 && format != 2) || arr == null) {
             throw new IllegalArgumentException("Ce n'est pas un export de profils ClickBridge.");
         }
         int added = 0;

@@ -21,6 +21,7 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
 
     private final List<Runnable> updaters = new ArrayList<>();
     private TextView profileText, pointsPill, accessPill, bgPill, addressText, logView;
+    private final Button[] deviceButtons = new Button[2];
     private Button repeatButton, verboseButton, logButton;
     private final Button[] themeButtons = new Button[3];
     private boolean logVisible;
@@ -37,6 +38,7 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
                     }
                 }));
 
+        buildDeviceCard();
         buildLinksCard();
         buildTapsCard();
         buildRepeatCard();
@@ -113,6 +115,38 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
     }
 
     // ---------------------------------------------------------------- cartes
+
+    private void buildDeviceCard() {
+        LinearLayout card = section("🚴  Appareil",
+                "Choisis la manette que tu utilises. Le Zwift Click est une seule manette (boutons + et −). "
+                        + "Le Zwift Ride a deux unités, gauche et droite : ClickBridge se connecte aux deux "
+                        + "(croix directionnelle et leviers à gauche, boutons A B Y Z et leviers à droite).");
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        String[] names = {"Zwift Click", "Zwift Ride"};
+        final String[] modes = {Buttons.MODE_CLICK, Buttons.MODE_RIDE};
+        for (int i = 0; i < 2; i++) {
+            final String mode = modes[i];
+            Button b = Ui.soft(this, theme, names[i], new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    if (mode.equals(Prefs.deviceMode(SettingsActivity.this))) return;
+                    Prefs.setDeviceMode(SettingsActivity.this, mode);
+                    BridgeService s = BridgeService.current;
+                    if (s != null) s.applyMode();
+                    refresh();
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            lp.topMargin = dp(8);
+            if (i > 0) lp.leftMargin = dp(8);
+            deviceButtons[i] = b;
+            row.addView(b, lp);
+        }
+        card.addView(row);
+        hint(card, "Un profil choisit quels boutons sont pilotés : pour le Ride, active les boutons voulus dans "
+                + "« Gérer les profils » > « Boutons du profil ». Les nouveaux profils partent des leviers du Ride "
+                + "ou des boutons + et − du Click, selon l'appareil choisi ici.");
+    }
 
     private void buildLinksCard() {
         LinearLayout card = section("📂  Profils et historique",
@@ -212,26 +246,26 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
     }
 
     private void buildClickCard() {
-        LinearLayout card = section("🔗  Appairage du Click",
-                "Après la première connexion, ClickBridge mémorise ton Click et s'y reconnecte tout "
-                        + "seul. Si tu changes de Click, ou si la connexion échoue sans raison, oublie-le "
-                        + "puis redémarre.");
+        LinearLayout card = section("🔗  Appairage",
+                "Après la première connexion, ClickBridge mémorise ta manette (les deux unités pour le "
+                        + "Ride) et s'y reconnecte tout seul. Si tu changes de manette, ou si la connexion "
+                        + "échoue sans raison, oublie-la puis redémarre.");
         addressText = Ui.text(this, "", 13, theme.text, true);
         addressText.setPadding(0, dp(6), 0, 0);
         card.addView(addressText);
-        card.addView(Ui.soft(this, theme, "Oublier le Click", new View.OnClickListener() {
+        card.addView(Ui.soft(this, theme, "Oublier la manette", new View.OnClickListener() {
             @Override public void onClick(View v) {
                 BridgeService s = BridgeService.current;
                 if (s != null) {
-                    s.forgetClick();
+                    s.forgetDevices();
                 } else {
-                    Prefs.setClickAddress(SettingsActivity.this, null);
-                    Bridge.get().log("Click oublié.");
+                    for (String role : rolesOfMode()) Prefs.setDeviceAddress(SettingsActivity.this, role, null);
+                    Bridge.get().log("Manette oubliée.");
                 }
                 refresh();
             }
         }));
-        hint(card, "Un Click ne peut être connecté qu'à un seul appareil à la fois : ferme Zwift, "
+        hint(card, "Une manette ne peut être connectée qu'à un seul appareil à la fois : ferme Zwift, "
                 + "Companion et ClickBridge sur ton PC avant de l'utiliser ici.");
     }
 
@@ -272,7 +306,7 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
             }
         });
         card.addView(verboseButton);
-        hint(card, "« Détaillé » ajoute chaque message reçu du Click au journal. À activer seulement "
+        hint(card, "« Détaillé » ajoute chaque message reçu de la manette au journal. À activer seulement "
                 + "pour chercher une panne.");
         logButton = Ui.soft(this, theme, "Afficher le journal ▾", new View.OnClickListener() {
             @Override public void onClick(View v) {
@@ -291,6 +325,23 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
         logView.setVisibility(View.GONE);
         logView.setPadding(0, dp(10), 0, 0);
         card.addView(logView);
+    }
+
+    private List<String> rolesOfMode() {
+        List<String> roles = new ArrayList<>();
+        if (Buttons.MODE_RIDE.equals(Prefs.deviceMode(this))) {
+            roles.add(ClickClient.ROLE_RIDE_LEFT);
+            roles.add(ClickClient.ROLE_RIDE_RIGHT);
+        } else {
+            roles.add(ClickClient.ROLE_CLICK);
+        }
+        return roles;
+    }
+
+    private static String roleName(String role) {
+        if (ClickClient.ROLE_RIDE_LEFT.equals(role)) return "Ride gauche";
+        if (ClickClient.ROLE_RIDE_RIGHT.equals(role)) return "Ride droite";
+        return "Click";
     }
 
     // ---------------------------------------------------------------- mise à jour
@@ -317,8 +368,17 @@ public class SettingsActivity extends BaseActivity implements Bridge.Ui {
         Ui.setPill(this, bgPill, bg ? "✓  Autorisé sans restriction" : "!  Optimisation de batterie active",
                 bg ? theme.ok : theme.warn);
 
-        String address = Prefs.clickAddress(this);
-        addressText.setText(address == null ? "Aucun Click mémorisé" : "Click mémorisé : " + address);
+        StringBuilder addr = new StringBuilder();
+        for (String role : rolesOfMode()) {
+            String a = Prefs.deviceAddress(this, role);
+            if (addr.length() > 0) addr.append('\n');
+            addr.append(roleName(role)).append(" : ").append(a == null ? "aucune manette mémorisée" : a);
+        }
+        addressText.setText(addr.toString());
+
+        String deviceMode = Prefs.deviceMode(this);
+        Ui.styleSoft(this, theme, deviceButtons[0], Buttons.MODE_CLICK.equals(deviceMode));
+        Ui.styleSoft(this, theme, deviceButtons[1], Buttons.MODE_RIDE.equals(deviceMode));
 
         verboseButton.setText(Prefs.verbose(this) ? "Journal détaillé : activé" : "Journal détaillé : désactivé");
         int mode = Prefs.theme(this);

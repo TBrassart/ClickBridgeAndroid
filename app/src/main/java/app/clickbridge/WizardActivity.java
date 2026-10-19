@@ -82,10 +82,11 @@ public class WizardActivity extends BaseActivity implements Bridge.Ui {
         }));
 
         // 5. connexion
-        LinearLayout c5 = addStep(5, "Connecter le Click",
-                "Ferme Zwift, Companion et ClickBridge sur ton PC : le Click ne se connecte qu'à un "
-                        + "appareil à la fois. Appuie sur Démarrer, puis sur un bouton du Click jusqu'à ce "
-                        + "que sa LED pulse en bleu.");
+        LinearLayout c5 = addStep(5, "Connecter la manette",
+                "Choisis ton appareil (Zwift Click ou Zwift Ride) dans Réglages > Appareil. Ferme Zwift, "
+                        + "Companion et ClickBridge sur ton PC : une manette ne se connecte qu'à un appareil à la "
+                        + "fois. Appuie sur Démarrer, puis sur un bouton de la manette (des deux unités pour le "
+                        + "Ride) jusqu'à ce que sa LED pulse en bleu.");
         connectState = Ui.text(this, "", 14, theme.muted, true);
         connectState.setPadding(0, dp(10), 0, 0);
         c5.addView(connectState);
@@ -191,7 +192,7 @@ public class WizardActivity extends BaseActivity implements Bridge.Ui {
 
         Bridge b = Bridge.get();
         boolean connected = b.isRunning() && b.statusLevel() == ClickClient.GREEN;
-        mark(4, connected, "Fait : Click connecté", "À faire");
+        mark(4, connected, "Fait : manette connectée", "À faire");
         connectState.setText(b.statusText());
         int color;
         switch (b.statusLevel()) {

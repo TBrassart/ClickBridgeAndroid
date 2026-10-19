@@ -15,6 +15,9 @@ final class Bridge {
 
         /** Le profil actif ou la liste des profils a changé. */
         default void onProfileChanged() { }
+
+        /** Dernier bouton enfoncé (texte lisible, ex. « Levier droit haut »). */
+        default void onLastButton(String label) { }
     }
 
     private static final Bridge INSTANCE = new Bridge();
@@ -67,6 +70,15 @@ final class Bridge {
 
     void buttons(boolean plus, boolean minus) {
         if (ui != null) ui.onButtons(plus, minus);
+    }
+
+    private String lastButton = "";
+
+    String lastButton() { return lastButton; }
+
+    void lastButton(String label) {
+        lastButton = label;
+        if (ui != null) ui.onLastButton(label);
     }
 
     void profileChanged() {

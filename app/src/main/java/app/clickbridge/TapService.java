@@ -85,12 +85,16 @@ public class TapService extends AccessibilityService {
 
     // ---------------------------------------------------------------- toucher
 
-    /** Touche le point réglé du bouton + ou −. Renvoie null si OK, sinon un message d'erreur. */
-    String tap(boolean plus) {
+    /**
+     * Touche le point réglé du bouton. Renvoie null si le toucher est parti, "" si ce bouton n'est
+     * pas piloté par le profil actif (rien à faire), sinon un message d'erreur.
+     */
+    String tap(String button) {
+        if (!Profiles.isEnabled(this, button)) return "";
         String orient = orientationKey();
-        float[] p = Prefs.point(this, plus, orient);
+        float[] p = Profiles.point(this, button, orient);
         if (p == null) {
-            return "Point d'appui non réglé pour l'orientation "
+            return "Point d'appui non réglé pour « " + Buttons.label(button) + " » en "
                     + ("land".equals(orient) ? "paysage" : "portrait") + ".";
         }
         int[] s = screenSize();

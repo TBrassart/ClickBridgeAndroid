@@ -14,12 +14,19 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 /**
- * Service de premier plan : garde la connexion Bluetooth au Click quand une autre appli
- * (MyWhoosh) est à l'écran, transforme chaque appui en toucher via TapService (avec répétition
- * si le bouton reste enfoncé) et tient l'historique des sessions.
+ * Service de premier plan : garde les connexions Bluetooth aux manettes (le Click, ou les deux
+ * unités du Ride) quand une autre appli est à l'écran, transforme chaque appui en toucher via
+ * TapService (avec répétition si le bouton reste enfoncé) et tient l'historique des sessions.
  */
-public class BridgeService extends Service implements ClickClient.Listener {
+public class BridgeService extends Service {
 
     static final String ACTION_STOP = "app.clickbridge.STOP";
     static final String ACTION_CALIBRATE = "app.clickbridge.CALIBRATE";
@@ -28,15 +35,21 @@ public class BridgeService extends Service implements ClickClient.Listener {
     private static final String CHANNEL = "clickbridge";
     private static final int NOTIF_ID = 1;
     private static final long MAX_REPEAT_MS = 60_000L;   // garde-fou si un relâchement est perdu
+    private static final long RIDE_STAGGER_MS = 1500L;   // la 2e unité du Ride démarre un peu après la 1re
 
     static volatile BridgeService current;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private ClickClient client;
-    private boolean plusDown, minusDown;
-    private Runnable plusRepeat, minusRepeat;
-    private long plusSince, minusSince;
-    private int plusRepeats, minusRepeats;
+    private final List<ClickClient> clients = new ArrayList<>();
+    private final Map<String, Integer> roleLevel = new HashMap<>();
+    private final Map<String, String> roleText = new HashMap<>();
+    private final Map<String, Integer> roleBattery = new HashMap<>();
+    private final Set<String> down = new HashSet<>();
+    private final Map<String, Runnable> repeats = new HashMap<>();
+    private final Map<String, Long> pressedAt = new HashMap<>();
+    private final Map<String, Integer> repeatCount = new HashMap<>();
+    private boolean started;
+    private boolean sessionReady;
     private String lastNotificationText = "";
     private long lastWarn;
 
@@ -47,7 +60,6 @@ public class BridgeService extends Service implements ClickClient.Listener {
                 NotificationManager.IMPORTANCE_LOW);
         ch.setShowBadge(false);
         getSystemService(NotificationManager.class).createNotificationChannel(ch);
-        client = new ClickClient(this, this);
         current = this;
     }
 
@@ -56,11 +68,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
         String action = intent == null ? null : intent.getAction();
 
         if (ACTION_STOP.equals(action)) {
-            cancelRepeat(true);
-            cancelRepeat(false);
-            client.stop();
-            SessionLog.finish(this);
-            Bridge.get().running(false);
+            shutdown();
             stopForeground(true);
             stopSelf();
             return START_NOT_STICKY;
@@ -91,9 +99,9 @@ public class BridgeService extends Service implements ClickClient.Listener {
             if (p != null) Bridge.get().log("Profil actif : " + p.name);
         }
 
-        client.setVerbose(Prefs.verbose(this));
-        if (!client.isRunning()) {
-            client.start();
+        if (!started) {
+            started = true;
+            startClients();
             Bridge.get().running(true);
         }
         return START_STICKY;
@@ -102,11 +110,7 @@ public class BridgeService extends Service implements ClickClient.Listener {
     @Override
     public void onDestroy() {
         current = null;
-        cancelRepeat(true);
-        cancelRepeat(false);
-        client.stop();
-        SessionLog.finish(this);
-        Bridge.get().running(false);
+        shutdown();
         super.onDestroy();
     }
 
@@ -115,23 +119,168 @@ public class BridgeService extends Service implements ClickClient.Listener {
         return null;
     }
 
-    void setVerbose(boolean v) {
-        client.setVerbose(v);
+    // ---------------------------------------------------------------- manettes
+
+    private List<String> rolesForMode() {
+        List<String> roles = new ArrayList<>();
+        if (Buttons.MODE_RIDE.equals(Prefs.deviceMode(this))) {
+            roles.add(ClickClient.ROLE_RIDE_LEFT);
+            roles.add(ClickClient.ROLE_RIDE_RIGHT);
+        } else {
+            roles.add(ClickClient.ROLE_CLICK);
+        }
+        return roles;
     }
 
-    void forgetClick() {
-        client.forget();
+    /** Une écoute par manette : les événements sont rapportés au service avec le rôle de la manette. */
+    private final class RoleListener implements ClickClient.Listener {
+        private final String role;
+
+        RoleListener(String role) {
+            this.role = role;
+        }
+
+        @Override public void onStatus(String text, int level) {
+            roleText.put(role, text);
+            roleLevel.put(role, level);
+            recomputeStatus();
+        }
+
+        @Override public void onLog(String text) {
+            Bridge.get().log(text);
+        }
+
+        @Override public void onBattery(int percent) {
+            roleBattery.put(role, percent);
+            int min = 101;
+            for (int v : roleBattery.values()) if (v >= 0 && v < min) min = v;
+            if (min <= 100) {
+                Bridge.get().battery(min);
+                SessionLog.onBattery(BridgeService.this, min);
+            }
+        }
+
+        @Override public void onButton(String id, boolean pressed) {
+            handleButton(id, pressed);
+        }
+    }
+
+    private void startClients() {
+        clients.clear();
+        roleLevel.clear();
+        roleText.clear();
+        roleBattery.clear();
+        final boolean verbose = Prefs.verbose(this);
+        List<String> roles = rolesForMode();
+        for (int i = 0; i < roles.size(); i++) {
+            final ClickClient c = new ClickClient(this, roles.get(i), new RoleListener(roles.get(i)));
+            c.setVerbose(verbose);
+            clients.add(c);
+            if (i == 0) {
+                c.start();
+            } else {
+                handler.postDelayed(new Runnable() {
+                    @Override public void run() {
+                        if (started && clients.contains(c)) c.start();
+                    }
+                }, RIDE_STAGGER_MS * i);
+            }
+        }
+    }
+
+    private void stopClients() {
+        for (ClickClient c : clients) c.stop();
+        clients.clear();
+        for (String id : new ArrayList<>(down)) handleButton(id, false);
+        sessionReady = false;
+    }
+
+    private void shutdown() {
+        started = false;
+        handler.removeCallbacksAndMessages(null);
+        for (Runnable r : repeats.values()) handler.removeCallbacks(r);
+        repeats.clear();
+        stopClients();
+        SessionLog.finish(this);
+        Bridge.get().running(false);
+    }
+
+    /** L'appareil choisi (Click ou Ride) a changé : on repart avec les bonnes manettes. */
+    void applyMode() {
+        if (!started) return;
+        stopClients();
+        SessionLog.finish(this);
+        Bridge.get().status("Changement d'appareil…", ClickClient.ORANGE);
+        startClients();
+    }
+
+    void setVerbose(boolean v) {
+        for (ClickClient c : clients) c.setVerbose(v);
+    }
+
+    void forgetDevices() {
+        for (ClickClient c : clients) c.forget();
+    }
+
+    // ---------------------------------------------------------------- état global
+
+    private static String sideName(String role) {
+        return ClickClient.ROLE_RIDE_LEFT.equals(role) ? "Gauche" : "Droite";
+    }
+
+    /** Résume l'état de toutes les manettes en un statut et une couleur. */
+    private void recomputeStatus() {
+        List<String> roles = rolesForMode();
+        int ready = 0;
+        boolean anyRed = false;
+        for (String r : roles) {
+            Integer lv = roleLevel.get(r);
+            if (lv != null && lv == ClickClient.GREEN) ready++;
+            if (lv != null && lv == ClickClient.RED) anyRed = true;
+        }
+        String text;
+        int level;
+        if (roles.size() == 1) {
+            String t = roleText.get(roles.get(0));
+            Integer lv = roleLevel.get(roles.get(0));
+            text = t == null ? "…" : t;
+            level = lv == null ? ClickClient.GRAY : lv;
+        } else if (ready == roles.size()) {
+            text = "Ride connecté : unités gauche et droite prêtes";
+            level = ClickClient.GREEN;
+        } else {
+            StringBuilder sb = new StringBuilder();
+            for (String r : roles) {
+                String t = roleText.get(r);
+                Integer lv = roleLevel.get(r);
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(sideName(r)).append(" : ")
+                        .append(lv != null && lv == ClickClient.GREEN ? "prête" : (t == null ? "…" : t));
+            }
+            text = sb.toString();
+            level = ready > 0 ? ClickClient.ORANGE : (anyRed ? ClickClient.RED : ClickClient.ORANGE);
+        }
+        Bridge.get().status(text, level);
+
+        if (ready > 0 && !sessionReady) {
+            sessionReady = true;
+            SessionLog.onReady(this, Profiles.active(this).name, Bridge.get().battery());
+        } else if (ready == 0 && sessionReady) {
+            sessionReady = false;
+            SessionLog.onNotReady(this);
+        }
+        if (started) updateNotification(composeText());     // pas de notification fantôme après l'arrêt
     }
 
     // ---------------------------------------------------------------- notification
 
     private String composeText() {
-        return Profiles.active(this).name + " · " + Bridge.get().statusText();
+        return Profiles.active(this).name + " · " + Bridge.get().statusText().replace('\n', ' ');
     }
 
     /** Appelé quand le profil actif change. */
     void refreshNotification() {
-        updateNotification(composeText());
+        if (started) updateNotification(composeText());
     }
 
     private void startInForeground(String text) {
@@ -188,115 +337,103 @@ public class BridgeService extends Service implements ClickClient.Listener {
         getSystemService(NotificationManager.class).notify(NOTIF_ID, buildNotification(text));
     }
 
-    // ---------------------------------------------------------------- ClickClient.Listener
-
-    @Override
-    public void onStatus(String text, int level) {
-        Bridge.get().status(text, level);
-        if (level == ClickClient.GREEN) {
-            SessionLog.onReady(this, Profiles.active(this).name, Bridge.get().battery());
-        } else {
-            SessionLog.onNotReady(this);
-        }
-        updateNotification(composeText());
-    }
-
-    @Override
-    public void onLog(String text) {
-        Bridge.get().log(text);
-    }
-
-    @Override
-    public void onBattery(int percent) {
-        Bridge.get().battery(percent);
-        SessionLog.onBattery(this, percent);
-    }
-
-    @Override
-    public void onButtons(boolean plus, boolean minus) {
-        Bridge.get().buttons(plus, minus);
-        handleEdge(true, plus);
-        handleEdge(false, minus);
-    }
-
     // ---------------------------------------------------------------- appui et répétition
 
-    private void handleEdge(boolean isPlus, boolean pressed) {
-        boolean was = isPlus ? plusDown : minusDown;
-        if (isPlus) plusDown = pressed; else minusDown = pressed;
-        String name = isPlus ? "+" : "−";
-        if (pressed && !was) {
-            long now = SystemClock.uptimeMillis();
-            if (isPlus) { plusSince = now; plusRepeats = 0; } else { minusSince = now; minusRepeats = 0; }
+    private void handleButton(String id, boolean pressed) {
+        boolean was = down.contains(id);
+        if (pressed == was) return;
+        String name = Buttons.label(id);
+        if (pressed) {
+            down.add(id);
+            pressedAt.put(id, SystemClock.uptimeMillis());
+            repeatCount.put(id, 0);
+            Bridge.get().lastButton(name);
             if (Prefs.verbose(this)) {
-                Bridge.get().log("Appui " + name + " : répétition " + (Prefs.repeatEnabled(this)
+                Bridge.get().log("Appui : " + name + (Buttons.repeatable(id)
+                        ? " · répétition " + (Prefs.repeatEnabled(this)
                         ? "activée (délai " + Prefs.repeatDelay(this) + " ms, intervalle "
                         + Math.max(Prefs.repeatInterval(this), Prefs.holdMs(this) + 20) + " ms)"
-                        : "désactivée"));
+                        : "désactivée") : ""));
             }
-            
-            scheduleRepeat(isPlus);
-        } else if (!pressed && was) {
+            tap(id);
+            scheduleRepeat(id);
+        } else {
+            down.remove(id);
             if (Prefs.verbose(this)) {
-                long since = isPlus ? plusSince : minusSince;
-                int n = isPlus ? plusRepeats : minusRepeats;
-                Bridge.get().log("Relâché " + name + " après " + (SystemClock.uptimeMillis() - since)
-                        + " ms, " + n + " répétition(s)");
+                Long since = pressedAt.get(id);
+                Integer n = repeatCount.get(id);
+                Bridge.get().log("Relâché : " + name + " après "
+                        + (since == null ? 0 : SystemClock.uptimeMillis() - since) + " ms, "
+                        + (n == null ? 0 : n) + " répétition(s)");
             }
-            cancelRepeat(isPlus);
+            cancelRepeat(id);
         }
+        updateTiles();
+    }
+
+    /** Les deux indicateurs de l'accueil : « vitesse + » et « vitesse − ». */
+    private void updateTiles() {
+        boolean plus = false, minus = false;
+        for (String id : down) {
+            int d = Buttons.direction(id);
+            if (d > 0) plus = true; else if (d < 0) minus = true;
+        }
+        Bridge.get().buttons(plus, minus);
     }
 
     /** Si la répétition est activée et que le bouton reste enfoncé : un toucher après le délai, puis à intervalle régulier. */
-    private void scheduleRepeat(final boolean isPlus) {
-        cancelRepeat(isPlus);
-        if (!Prefs.repeatEnabled(this)) return;
+    private void scheduleRepeat(final String id) {
+        cancelRepeat(id);
+        if (!Buttons.repeatable(id) || !Prefs.repeatEnabled(this)) return;
         Runnable r = new Runnable() {
             @Override public void run() {
-                boolean down = isPlus ? plusDown : minusDown;
-                long since = isPlus ? plusSince : minusSince;
-                if (!down || !Prefs.repeatEnabled(BridgeService.this)) return;
-                if (SystemClock.uptimeMillis() - since > MAX_REPEAT_MS) {
+                if (!down.contains(id) || !Prefs.repeatEnabled(BridgeService.this)) return;
+                Long since = pressedAt.get(id);
+                if (since != null && SystemClock.uptimeMillis() - since > MAX_REPEAT_MS) {
                     Bridge.get().log("Répétition arrêtée après 60 s (relâchement non reçu ?).");
                     return;
                 }
-                int n = isPlus ? ++plusRepeats : ++minusRepeats;
-                if (Prefs.verbose(BridgeService.this)) Bridge.get().log("Répétition n°" + n);
-                tap(isPlus);
+                Integer n = repeatCount.get(id);
+                int next = (n == null ? 0 : n) + 1;
+                repeatCount.put(id, next);
+                if (Prefs.verbose(BridgeService.this)) Bridge.get().log("Répétition n°" + next);
+                tap(id);
                 // jamais plus rapide que la durée du toucher, sinon les gestes se chevauchent
                 long interval = Math.max(Prefs.repeatInterval(BridgeService.this),
                         Prefs.holdMs(BridgeService.this) + 20L);
                 handler.postDelayed(this, interval);
             }
         };
-        if (isPlus) plusRepeat = r; else minusRepeat = r;
+        repeats.put(id, r);
         handler.postDelayed(r, Prefs.repeatDelay(this));
     }
 
-    private void cancelRepeat(boolean isPlus) {
-        Runnable r = isPlus ? plusRepeat : minusRepeat;
+    private void cancelRepeat(String id) {
+        Runnable r = repeats.remove(id);
         if (r != null) handler.removeCallbacks(r);
-        if (isPlus) plusRepeat = null; else minusRepeat = null;
     }
 
-    private void tap(boolean plus) {
+    private void tap(String id) {
         TapService t = TapService.instance;
         String problem;
         if (t == null) {
             problem = "Service d'accessibilité inactif : active-le dans les réglages d'Android.";
         } else {
-            problem = t.tap(plus);
+            problem = t.tap(id);
         }
-        if (problem != null) {
+        if (problem == null) {
+            int dir = Buttons.direction(id);
+            if (dir != 0) SessionLog.onTap(this, dir > 0);     // l'historique compte les changements de vitesse
+            if (Prefs.verbose(this)) Bridge.get().log("Toucher envoyé : " + Buttons.label(id));
+        } else if (problem.isEmpty()) {
+            if (Prefs.verbose(this)) {
+                Bridge.get().log(Buttons.label(id) + " : non piloté par le profil actif (à activer dans « Gérer les profils »).");
+            }
+        } else {
             long now = SystemClock.uptimeMillis();
             if (Prefs.verbose(this) || now - lastWarn > 8000) {   // sinon : un message toutes les 8 s
                 lastWarn = now;
                 Bridge.get().log(problem);
-            }
-        } else {
-            SessionLog.onTap(this, plus);
-            if (Prefs.verbose(this)) {
-                Bridge.get().log("Toucher envoyé (" + (plus ? "+" : "−") + ")");
             }
         }
     }

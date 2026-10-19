@@ -28,12 +28,12 @@ final class Profiles {
         }
         if (b == null || b.list.isEmpty()) {
             // première utilisation (ou stockage illisible) : un profil, avec les anciens points
-            b = ProfileBook.single("MyWhoosh");
+            b = ProfileBook.single("MyWhoosh", Buttons.defaultsFor(Prefs.deviceMode(c)));
             Profile p = b.list.get(0);
             for (String orient : Profile.ORIENTS) {
                 for (boolean plus : new boolean[]{true, false}) {
                     float[] pt = Prefs.legacyPoint(c, plus, orient);
-                    if (pt != null) p.setPoint(plus, orient, pt[0], pt[1]);
+                    if (pt != null) p.setPoint(plus ? Buttons.PLUS : Buttons.MINUS, orient, pt[0], pt[1]);
                 }
             }
             save(c, b);
@@ -76,18 +76,36 @@ final class Profiles {
 
     // ---------------------------------------------------------------- points (profil actif)
 
-    static synchronized float[] point(Context c, boolean plus, String orient) {
-        return book(c).active().point(plus, orient);
+    static synchronized float[] point(Context c, String button, String orient) {
+        return book(c).active().point(button, orient);
     }
 
-    static synchronized void setPoint(Context c, boolean plus, String orient, float x, float y) {
+    static synchronized void setPoint(Context c, String button, String orient, float x, float y) {
         ProfileBook b = book(c);
-        b.active().setPoint(plus, orient, x, y);
+        b.active().setPoint(button, orient, x, y);
         changed(c, b);
     }
 
     static synchronized boolean hasPoints(Context c, String orient) {
         return book(c).active().hasPoints(orient);
+    }
+
+    /** Ce bouton est-il piloté par le profil actif ? */
+    static synchronized boolean isEnabled(Context c, String button) {
+        return book(c).active().isEnabled(button);
+    }
+
+    /** Boutons activés dans le profil actif (copie). */
+    static synchronized List<String> buttons(Context c) {
+        return new ArrayList<>(book(c).active().buttons);
+    }
+
+    static synchronized void setButtons(Context c, String profileId, List<String> enabled) {
+        ProfileBook b = book(c);
+        Profile p = b.byId(profileId);
+        if (p == null) return;
+        p.setButtons(enabled);
+        changed(c, b);
     }
 
     // ---------------------------------------------------------------- gestion
@@ -117,7 +135,7 @@ final class Profiles {
 
     static synchronized Profile create(Context c, String name) {
         ProfileBook b = book(c);
-        Profile p = b.create(name);
+        Profile p = b.create(name, Buttons.defaultsFor(Prefs.deviceMode(c)));
         if (p != null) changed(c, b);
         return p;
     }

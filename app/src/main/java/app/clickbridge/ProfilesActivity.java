@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 /** Gestion des profils : choisir, créer, renommer, dupliquer, supprimer, exporter, importer. */
@@ -85,7 +86,13 @@ public class ProfilesActivity extends BaseActivity implements Bridge.Ui {
         card.addView(head);
 
         if (isDefault) card.addView(Ui.pill(this, "★ Par défaut", theme.warn), Ui.wrapTop(this, 8));
-        TextView info = Ui.text(this, "Points : portrait " + (p.hasPoints("port") ? "✓" : "✗")
+        StringBuilder names = new StringBuilder();
+        for (String b : p.buttons) {
+            if (names.length() > 0) names.append("  ");
+            names.append(Buttons.glyph(b));
+        }
+        TextView info = Ui.text(this, "Boutons : " + (names.length() == 0 ? "aucun" : names)
+                + "\nPoints : portrait " + (p.hasPoints("port") ? "✓" : "✗")
                 + "  ·  paysage " + (p.hasPoints("land") ? "✓" : "✗"), 13, theme.muted, false);
         info.setPadding(0, dp(8), 0, 0);
         card.addView(info);
@@ -102,6 +109,9 @@ public class ProfilesActivity extends BaseActivity implements Bridge.Ui {
                 Actions.startCalibration(ProfilesActivity.this);
             }
         });
+        Button chooseButtons = Ui.soft(this, theme, "Boutons du profil", new View.OnClickListener() {
+            @Override public void onClick(View v) { chooseButtons(p); }
+        });
         Button rename = Ui.soft(this, theme, "Renommer", new View.OnClickListener() {
             @Override public void onClick(View v) {
                 prompt("Renommer le profil", p.name, new TextCallback() {
@@ -117,12 +127,12 @@ public class ProfilesActivity extends BaseActivity implements Bridge.Ui {
             }
         });
         if (isDefault) {
-            addButtons(card, setPoints, rename, duplicate);
+            addButtons(card, setPoints, chooseButtons, rename, duplicate);
         } else {
             Button makeDefault = Ui.soft(this, theme, "Définir par défaut", new View.OnClickListener() {
                 @Override public void onClick(View v) { Profiles.setDefault(ProfilesActivity.this, p.id); }
             });
-            addButtons(card, setPoints, rename, duplicate, makeDefault);
+            addButtons(card, setPoints, chooseButtons, rename, duplicate, makeDefault);
         }
         if (count > 1) {
             Button delete = Ui.soft(this, theme, "Supprimer ce profil", new View.OnClickListener() {
@@ -192,6 +202,36 @@ public class ProfilesActivity extends BaseActivity implements Bridge.Ui {
                 .setPositiveButton("OK", new DialogInterface.OnClickListener() {
                     @Override public void onClick(DialogInterface d, int which) {
                         callback.run(input.getText().toString());
+                    }
+                })
+                .setNegativeButton("Annuler", null)
+                .show();
+    }
+
+    /** Choisit quels boutons (Click, leviers et boutons du Ride) ce profil pilote. */
+    private void chooseButtons(final Profile p) {
+        final String[] ids = Buttons.ALL;
+        CharSequence[] labels = new CharSequence[ids.length];
+        final boolean[] checked = new boolean[ids.length];
+        for (int i = 0; i < ids.length; i++) {
+            labels[i] = Buttons.label(ids[i]);
+            checked[i] = p.isEnabled(ids[i]);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Boutons de « " + p.name + " »")
+                .setMultiChoiceItems(labels, checked, new DialogInterface.OnMultiChoiceClickListener() {
+                    @Override public void onClick(DialogInterface d, int which, boolean isChecked) {
+                        checked[which] = isChecked;
+                    }
+                })
+                .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int which) {
+                        List<String> enabled = new ArrayList<>();
+                        for (int i = 0; i < ids.length; i++) if (checked[i]) enabled.add(ids[i]);
+                        Profiles.setButtons(ProfilesActivity.this, p.id, enabled);
+                        toast(enabled.isEmpty()
+                                ? "Aucun bouton activé : ce profil ne touchera rien."
+                                : "Boutons enregistrés. Utilise « Régler les points » pour les placer.");
                     }
                 })
                 .setNegativeButton("Annuler", null)

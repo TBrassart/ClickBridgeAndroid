@@ -47,7 +47,7 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView statusText, batteryText, chipBt, chipAccess, chipPoints, chipBg;
-    private TextView profileName, profileInfo, historyText;
+    private TextView profileName, profileInfo, historyText, lastButtonText;
     private BatteryBar batteryBar;
     private Button startButton;
     private Tile plusTile, minusTile;
@@ -67,6 +67,7 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         onStatus(b.statusText(), b.statusLevel());
         onBattery(b.battery());
         onRunning(b.isRunning());
+        onLastButton(b.lastButton());
     }
 
     @Override
@@ -126,7 +127,7 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         batteryBar = new BatteryBar(this, theme);
         status.addView(batteryBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(10)));
-        batteryText = Ui.text(this, "Batterie du Click : –", 13, theme.muted, false);
+        batteryText = Ui.text(this, "Batterie : –", 13, theme.muted, false);
         batteryText.setPadding(0, dp(6), 0, 0);
         status.addView(batteryText);
         content.addView(status);
@@ -144,6 +145,11 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         tiles.addView(plusTile.box, lpPlus);
         tiles.addView(minusTile.box, lpMinus);
         content.addView(tiles);
+
+        lastButtonText = Ui.text(this, "Dernier bouton : –", 12, theme.muted, false);
+        lastButtonText.setGravity(Gravity.CENTER);
+        lastButtonText.setPadding(0, dp(2), 0, 0);
+        content.addView(lastButtonText);
 
         // démarrer / arrêter
         startButton = Ui.primary(this, "Démarrer", theme.cyan, theme.blue, new View.OnClickListener() {
@@ -202,7 +208,7 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
         }));
         content.addView(hist);
 
-        TextView foot = Ui.text(this, "Version 0.4  ·  Zwift Click V1", 12, theme.muted, false);
+        TextView foot = Ui.text(this, "Version 0.5  ·  Zwift Click V1 et Zwift Ride", 12, theme.muted, false);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, dp(18), 0, 0);
         content.addView(foot, Ui.fullTop(this, 0));
@@ -386,7 +392,12 @@ public class MainActivity extends BaseActivity implements Bridge.Ui {
     @Override
     public void onBattery(int percent) {
         batteryBar.setLevel(percent);
-        batteryText.setText(percent < 0 ? "Batterie du Click : –" : "Batterie du Click : " + percent + " %");
+        batteryText.setText(percent < 0 ? "Batterie : –" : "Batterie : " + percent + " %");
+    }
+
+    @Override
+    public void onLastButton(String label) {
+        lastButtonText.setText(label == null || label.isEmpty() ? "Dernier bouton : –" : "Dernier bouton : " + label);
     }
 
     @Override
